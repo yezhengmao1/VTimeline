@@ -1,0 +1,44 @@
+# Copyright (c) 2025 yezhengmao
+
+---
+# need clang-tidy version >= 15
+Checks: 'misc-*,
+         hicpp-*,
+         bugprone-*,
+         modernize-*,
+         performance-*,
+         portability-*,
+         readability-*,
+         concurrency-*,
+         clang-analyzer-*,
+         cppcoreguidelines-*,
+         -modernize-avoid-c-arrays,
+         -modernize-use-trailing-return-type,
+         -modernize-use-auto,
+         -cppcoreguidelines-avoid-non-const-global-variables,
+         -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+         -cppcoreguidelines-pro-type-vararg,
+         -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+         -cppcoreguidelines-non-private-member-variables-in-classes,
+         -cppcoreguidelines-pro-type-reinterpret-cast,
+         -cppcoreguidelines-avoid-c-arrays,
+         -cppcoreguidelines-avoid-do-while,
+         -misc-non-private-member-variables-in-classe,
+         -misc-non-private-member-variables-in-classes,
+         -hicpp-vararg,
+         -hicpp-avoid-c-arrays,
+         -hicpp-no-array-decay,
+         -hicpp-use-auto,
+         -hicpp-signed-bitwise,
+         -readability-magic-numbers'
+WarningsAsErrors: true
+HeaderFilterRegex: '.*'
+CheckOptions:
+  - key: cppcoreguidelines-macro-usage.AllowedRegexp
+    value: 'LOG_*|STRINGIFY*'
+  - key: cppcoreguidelines-avoid-magic-numbers.IgnoredIntegerValues
+    value: '0;1;2;8;256;1024;1900'
+  - key: readability-function-cognitive-complexity.IgnoreMacros
+    value: true
+  - key: bugprone-easily-swappable-parameters.MinimumLength
+    value: 3
