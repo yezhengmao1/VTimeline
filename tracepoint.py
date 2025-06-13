@@ -128,7 +128,7 @@ def __create_async_rotating_file_handler(
     return queue_handler
 
 
-def __create_logger(log_root_dir: str, logger_name: str):
+def __create_logger(log_root_dir: str, logger_name: str, formatter: logging.Formatter):
     log_dir = Path(log_root_dir) / logger_name / socket.gethostname()
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -138,9 +138,6 @@ def __create_logger(log_root_dir: str, logger_name: str):
     logger.addHandler(
         __create_async_rotating_file_handler(
             log_dir / f"{logger_name}_{os.getenv('LOCAL_RANK', -1)}.log",
-            logging.Formatter(
-                fmt="[%(levelname)s][%(process)d][%(name)s][%(asctime)s] %(message)s"
-            ),
         )
     )
     logger.propagate = False
@@ -149,7 +146,14 @@ def __create_logger(log_root_dir: str, logger_name: str):
 def tracepoint_module_setup():
     log_dir = os.getenv("VTIMELINE_LOGGER_DIR", "/var/log")
 
-    __create_logger(log_dir, "TracePoint")
+    default_formatter = (
+        logging.Formatter(
+            fmt="[%(levelname)s][%(process)d][%(name)s][%(asctime)s] %(message)s"
+        ),
+    )
+
+    __create_logger(log_dir, "VTimeLine", format=default_formatter)
+    __create_logger(log_dir, "TracePoint", format=TracePointFormatter())
 
 
 def cudavtimeline_module_setup():
