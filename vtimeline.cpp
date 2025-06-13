@@ -45,14 +45,11 @@ std::uint8_t g_need_to_stop = 0;
 //  prepare the name of dir and path //
 // ##################################//
 const char *_logger_dir = std::getenv("VTIMELINE_LOGGER_DIR");
-const char *_hostname = std::getenv("HOSTNAME");
 const char *_local_rank = std::getenv("LOCAL_RANK");
 const char *_rank = std::getenv("RANK");
 
 const std::string g_logger_dir =
     _logger_dir == nullptr ? "/var/log" : std::string(_logger_dir);
-const std::string g_hostname =
-    _hostname == nullptr ? "unkown-hostname" : std::string(_hostname);
 const std::string g_local_rank = _local_rank == nullptr ? "-1" : std::string(_local_rank);
 const std::string g_rank = _rank == nullptr ? "-1" : std::string(_rank);
 
@@ -68,7 +65,7 @@ void init_spdlog_env() {
     static std::mutex env_mutex;
     std::lock_guard<std::mutex> locker(env_mutex);
 
-    std::string log_dir_name = g_logger_dir + "/cupti/" + g_hostname;
+    std::string log_dir_name = g_logger_dir + "/CUPTI/";
     std::string log_file_name = log_dir_name + "/rank_" + g_local_rank + ".log";
 
     auto rotating_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(

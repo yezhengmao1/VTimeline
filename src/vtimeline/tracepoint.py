@@ -1,8 +1,8 @@
 import os
 import queue
-import socket
 import atexit
 import ctypes
+import logging
 from pathlib import Path
 import logging.handlers
 
@@ -13,6 +13,8 @@ import logging.handlers
 
 _ROTATE_FILE_COUNT = 5
 _ROTATE_FILE_MAX_SIZE = 200 * 1024 * 1024
+
+VLogger = logging.getLogger("VTimeLine")
 
 
 class TracePointFormatter(logging.Formatter):
@@ -80,10 +82,7 @@ class TracePoint:
 
 
 class CUDAVTimeLine:
-    def __init__(
-        self,
-        lib_path="/usr/local/lib/libvtimeline.so",
-    ):
+    def __init__(self, lib_path: str):
         self.lib = ctypes.CDLL(lib_path)
 
         self.lib.enable_vtimeline.argtypes = []
@@ -129,7 +128,7 @@ def __create_async_rotating_file_handler(
 
 
 def __create_logger(log_root_dir: str, logger_name: str, formatter: logging.Formatter):
-    log_dir = Path(log_root_dir) / logger_name / socket.gethostname()
+    log_dir = Path(log_root_dir) / logger_name
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # set logger
@@ -137,26 +136,33 @@ def __create_logger(log_root_dir: str, logger_name: str, formatter: logging.Form
     logger.setLevel(logging.INFO)
     logger.addHandler(
         __create_async_rotating_file_handler(
-            log_dir / f"{logger_name}_{os.getenv('LOCAL_RANK', -1)}.log",
+            log_dir / f"rank_{os.getenv('RANK', -1)}.log",
+            formatter,
         )
     )
     logger.propagate = False
 
 
 def tracepoint_module_setup():
+    # cupti in LOGGER_DIR/cupti/rank_i.log
+    # tracepoint in LOGGER_DIR/TracePoint/rank_i.log
+    # VTimeline in LOGGER_DIR/VTimeline/rank_i.log
+
     log_dir = os.getenv("VTIMELINE_LOGGER_DIR", "/var/log")
 
-    default_formatter = (
-        logging.Formatter(
-            fmt="[%(levelname)s][%(process)d][%(name)s][%(asctime)s] %(message)s"
-        ),
+    default_formatter = logging.Formatter(
+        fmt="[%(levelname)s][%(process)d][%(name)s][%(asctime)s] %(message)s"
     )
 
-    __create_logger(log_dir, "VTimeLine", format=default_formatter)
-    __create_logger(log_dir, "TracePoint", format=TracePointFormatter())
+    __create_logger(log_dir, "VTimeLine", default_formatter)
+    __create_logger(log_dir, "TracePoint", TracePointFormatter())
 
 
-def cudavtimeline_module_setup():
-    cupti = CUDAVTimeLine()
+def cudavtimeline_module_setup(lib_path: str = "/usr/local/lib/libvtimeline.so"):
+    if not os.path.isfile(lib_path):
+        print(" >>> no vtimeline to trace cuda activity")
+        return
+
+    cupti = CUDAVTimeLine(lib_path)
     cupti.enable()
     atexit.register(cupti.disable)
