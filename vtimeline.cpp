@@ -68,8 +68,8 @@ void init_spdlog_env() {
     static std::mutex env_mutex;
     std::lock_guard<std::mutex> locker(env_mutex);
 
-    std::string log_dir_name = g_logger_dir + "/megatron_cupti/" + g_hostname;
-    std::string log_file_name = log_dir_name + "/megatron_" + g_local_rank + ".log";
+    std::string log_dir_name = g_logger_dir + "/cupti/" + g_hostname;
+    std::string log_file_name = log_dir_name + "/rank_" + g_local_rank + ".log";
 
     auto rotating_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
         log_file_name, max_file_size, max_files);
@@ -277,8 +277,9 @@ bool init_cupti_env() {
 }
 
 void enable_cupti_activity() {
-    std::array<CUpti_ActivityKind, 1> activity_kinds = {
+    std::array<CUpti_ActivityKind, 2> activity_kinds = {
         CUPTI_ACTIVITY_KIND_KERNEL,
+        CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL,
     };
 
     for (const CUpti_ActivityKind kind : activity_kinds) {
