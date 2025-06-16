@@ -14,7 +14,7 @@ import logging.handlers
 _ROTATE_FILE_COUNT = 5
 _ROTATE_FILE_MAX_SIZE = 200 * 1024 * 1024
 
-VLogger = logging.getLogger("VTimeLine")
+VLogger = logging.getLogger("VLog")
 
 
 class TracePointFormatter(logging.Formatter):
@@ -154,7 +154,7 @@ def tracepoint_module_setup():
         fmt="[%(levelname)s][%(process)d][%(name)s][%(asctime)s] %(message)s"
     )
 
-    __create_logger(log_dir, "VTimeLine", default_formatter)
+    __create_logger(log_dir, "VLog", default_formatter)
     __create_logger(log_dir, "TracePoint", TracePointFormatter())
 
 
