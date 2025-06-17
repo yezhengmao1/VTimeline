@@ -143,9 +143,10 @@ def __create_logger(log_root_dir: str, logger_name: str, formatter: logging.Form
     logger.propagate = False
 
 
-def vinit():
+def vinit(enable_cuda: bool = True):
     tracepoint_module_setup()
-    cudavtimeline_module_setup()
+    if enable_cuda:
+        cudavtimeline_module_setup()
 
 
 def tracepoint_module_setup():

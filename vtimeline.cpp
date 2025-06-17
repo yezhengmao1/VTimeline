@@ -46,12 +46,10 @@ std::uint8_t g_need_to_stop = 0;
 //  prepare the name of dir and path //
 // ##################################//
 const char *_logger_dir = std::getenv("VTIMELINE_LOGGER_DIR");
-const char *_local_rank = std::getenv("LOCAL_RANK");
 const char *_rank = std::getenv("RANK");
 
 const std::string g_logger_dir =
     _logger_dir == nullptr ? "/var/log" : std::string(_logger_dir);
-const std::string g_local_rank = _local_rank == nullptr ? "-1" : std::string(_local_rank);
 const std::string g_rank = _rank == nullptr ? "-1" : std::string(_rank);
 
 void init_spdlog_env() {
@@ -67,7 +65,7 @@ void init_spdlog_env() {
     std::lock_guard<std::mutex> locker(env_mutex);
 
     std::string log_dir_name = g_logger_dir + "/CUPTI/";
-    std::string log_file_name = log_dir_name + "/rank_" + g_local_rank + ".log";
+    std::string log_file_name = log_dir_name + "/rank_" + g_rank + ".log";
 
     auto rotating_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
         log_file_name, max_file_size, max_files);
@@ -250,9 +248,9 @@ void init_buffer_process_task() {
         return std::make_unique<uint8_t[]>(CLIENT_BUFFER_SIZE);
     });
 
-    g_consume_buffer_from_cupti_task = std::move(std::thread([]() {
-        g_need_to_stop = 0;
+    g_need_to_stop = 0;
 
+    g_consume_buffer_from_cupti_task = std::move(std::thread([]() {
         while (true) {
             {
                 std::unique_lock<std::mutex> locker(g_process_buffer_mutex);
@@ -344,11 +342,19 @@ void enable_cupti_activity() {
 } // namespace
 
 extern "C" int enable_vtimeline(void) {
-    ::init_spdlog_env();
-
     ::init_buffer_process_task();
 
+    ::init_spdlog_env();
+
     if (!::init_cupti_env()) {
+        g_need_to_stop = 1;
+        g_client_buffer_notify.notify_one();
+
+        if (!g_consume_buffer_from_cupti_task.joinable()) {
+            return 1;
+        }
+
+        g_consume_buffer_from_cupti_task.join();
         return 1;
     }
 
@@ -364,7 +370,9 @@ extern "C" int disable_vtimeline(void) {
     g_client_buffer_notify.notify_one();
 
     // wait the backgroud task
-    g_consume_buffer_from_cupti_task.join();
+    if (g_consume_buffer_from_cupti_task.joinable()) {
+        g_consume_buffer_from_cupti_task.join();
+    }
 
     return 0;
 }
