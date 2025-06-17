@@ -60,11 +60,11 @@ class TraceEvent:
 def parse_trace_line(line: str) -> Optional[TraceEvent]:
     try:
         parts = line.strip().split(",")
-        if parts[0] == 0:
-            return None
 
         if len(parts) == 6:
             timestamp = int(parts[0])  # default is microsecond
+            if timestamp == 0:
+                return None
             process_id = "rank" + str(int(parts[1]))
             thread_id = "cpu"  # from cpu
             if timestamp > 1e17:  # from device

@@ -143,6 +143,11 @@ def __create_logger(log_root_dir: str, logger_name: str, formatter: logging.Form
     logger.propagate = False
 
 
+def vinit():
+    tracepoint_module_setup()
+    cudavtimeline_module_setup()
+
+
 def tracepoint_module_setup():
     # cupti in LOGGER_DIR/cupti/rank_i.log
     # tracepoint in LOGGER_DIR/TracePoint/rank_i.log

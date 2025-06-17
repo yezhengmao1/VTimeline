@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cupti.h>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <spdlog/async.h>
 #include <spdlog/spdlog.h>
@@ -133,21 +134,72 @@ void CUPTIAPI processBuffer(CUcontext context [[maybe_unused]],
 void consume_record_from_buffer(CUpti_Activity *record) {
     switch (record->kind) {
     case CUPTI_ACTIVITY_KIND_KERNEL: {
-        CUpti_ActivityKernel9 *kernel = reinterpret_cast<CUpti_ActivityKernel9 *>(record);
-        // kernel be put in the queue to ready to submit
-        uint64_t start_ts = kernel->start;
-        uint64_t end_ts = kernel->end;
+        CUpti_ActivityKernel9 *activity =
+            reinterpret_cast<CUpti_ActivityKernel9 *>(record);
+        uint64_t start_ts = activity->start;
+        uint64_t end_ts = activity->end;
 
-        uint32_t stream_id = kernel->streamId;
-        const std::string name(kernel->name);
+        uint32_t stream_id = activity->streamId;
+        const std::string name(activity->name);
 
         // one rank for one device
-        spdlog::info("{},{},{},{},{},{}", start_ts, g_rank, stream_id, "KERNEL", name,
-                     "B");
-        spdlog::info("{},{},{},{},{},{}", end_ts, g_rank, stream_id, "KERNEL", name, "E");
+        spdlog::info("{},{},{},KERNEL,{},B", start_ts, g_rank, stream_id, name);
+        spdlog::info("{},{},{},KERNEL,{},E", end_ts, g_rank, stream_id, name);
         break;
     }
+    case CUPTI_ACTIVITY_KIND_MEMCPY: {
+        CUpti_ActivityMemcpy5 *activity =
+            reinterpret_cast<CUpti_ActivityMemcpy5 *>(record);
 
+        uint64_t start_ts = activity->start;
+        uint64_t end_ts = activity->end;
+        uint32_t stream_id = activity->streamId;
+
+        uint8_t src_kind = activity->srcKind;
+        uint8_t dst_kind = activity->dstKind;
+
+        static std::map<uint8_t, const std::string> kind2name = {
+            {CUPTI_ACTIVITY_MEMORY_KIND_UNKNOWN, "unknown"},
+            {CUPTI_ACTIVITY_MEMORY_KIND_PAGEABLE, "pageable"},
+            {CUPTI_ACTIVITY_MEMORY_KIND_PINNED, "pinned"},
+            {CUPTI_ACTIVITY_MEMORY_KIND_DEVICE, "device"},
+            {CUPTI_ACTIVITY_MEMORY_KIND_ARRAY, "array"},
+            {CUPTI_ACTIVITY_MEMORY_KIND_MANAGED, "managed"},
+            {CUPTI_ACTIVITY_MEMORY_KIND_DEVICE_STATIC, "device_static"},
+            {CUPTI_ACTIVITY_MEMORY_KIND_MANAGED_STATIC, "managed_static"},
+        };
+        auto src_it = kind2name.find(src_kind);
+        auto dst_it = kind2name.find(dst_kind);
+
+        std::string name;
+
+        if (src_it == kind2name.end() || dst_it == kind2name.end()) [[unlikely]] {
+            name = "unknown";
+        } else {
+            name = src_it->second + "-" + dst_it->second;
+        }
+
+        spdlog::info("{},{},{},MEMCPY,{},B", start_ts, g_rank, stream_id, name);
+        spdlog::info("{},{},{},MEMCPY,{},E", end_ts, g_rank, stream_id, name);
+        break;
+    }
+    case CUPTI_ACTIVITY_KIND_MEMCPY2: {
+        CUpti_ActivityMemcpyPtoP4 *activity =
+            reinterpret_cast<CUpti_ActivityMemcpyPtoP4 *>(record);
+
+        uint64_t start_ts = activity->start;
+        uint64_t end_ts = activity->end;
+        uint32_t stream_id = activity->streamId;
+
+        uint32_t src_device = activity->srcDeviceId;
+        uint32_t dst_device = activity->dstDeviceId;
+
+        spdlog::info("{},{},{},P2P,d{}-d{},B", start_ts, g_rank, stream_id, "P2P",
+                     src_device, dst_device);
+        spdlog::info("{},{},{},P2P,d{}-d{},E", end_ts, g_rank, stream_id, "P2P",
+                     src_device, dst_device);
+        break;
+    }
     default:
         break;
     }
@@ -274,11 +326,12 @@ bool init_cupti_env() {
 }
 
 void enable_cupti_activity() {
-    std::array<CUpti_ActivityKind, 2> activity_kinds = {
+    std::array activity_kinds = {
         CUPTI_ACTIVITY_KIND_KERNEL,
         CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL,
+        CUPTI_ACTIVITY_KIND_MEMCPY,
+        CUPTI_ACTIVITY_KIND_MEMCPY2,
     };
-
     for (const CUpti_ActivityKind kind : activity_kinds) {
         CUptiResult result = cuptiActivityEnable(kind);
         if (result != CUPTI_SUCCESS) {
