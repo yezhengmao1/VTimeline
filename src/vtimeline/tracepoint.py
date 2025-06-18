@@ -51,6 +51,25 @@ class TracePointFormatter(logging.Formatter):
         return format_str
 
 
+class MemTracePointFormatter(logging.Formatter):
+    def __init__(self):
+        self.pid = os.getenv("RANK", -1)  # global rank
+
+    def format(self, record: logging.LogRecord):
+        try:
+            format_str = ",".join(
+                [
+                    str(int(record.created * 1000000)),  # microsecond
+                    str(self.pid),  # global rank
+                    record.getMessage(),  # memory size bytes
+                ]
+            )
+        except Exception as e:
+            format_str = f"error logger format : {str(e)}"
+
+        return format_str
+
+
 class TracePoint:
     def __init__(self, event_name: str, cat_name: str):
         self.logger = logging.getLogger("TracePoint")
@@ -81,22 +100,67 @@ class TracePoint:
         return False
 
 
-class CUDAVTimeLine:
-    def __init__(self, lib_path: str):
-        self.lib = ctypes.CDLL(lib_path)
+class MemTracePoint:
+    _logger = None
+    _is_cuda_env = None
 
-        self.lib.enable_vtimeline.argtypes = []
-        self.lib.enable_vtimeline.restype = ctypes.c_int
+    @classmethod
+    def initialize(cls):
+        cls._logger = logging.getLogger("MemTracePoint")
+        try:
+            import torch
 
-        self.lib.disable_vtimeline.argtypes = []
-        self.lib.disable_vtimeline.restype = ctypes.c_int
+            cls._is_cuda_env = torch.cuda.is_available()
+        except Exception:
+            cls._is_cuda_env = False
 
-    def enable(self):
-        if self.lib.enable_vtimeline() != 0:
+    def __init__(self):
+        raise RuntimeError("Use initialize to init CUPTI")
+
+    @staticmethod
+    def record():
+        if not MemTracePoint._is_cuda_env:
+            return
+
+        import torch
+
+        free, _ = torch.cuda.mem_get_info(torch.cuda.current_device())
+
+        MemTracePoint._logger.info(f"{free}")
+
+
+class CUPTI:
+    _lib = None
+
+    @classmethod
+    def initialize(cls, lib_path: str = "/usr/local/lib/libvtimeline.so"):
+        if not os.path.isfile(lib_path):
+            print(" >>> [vtimeline] no cupti lib to trace cuda activity.")
+            cls._lib = None
+            return
+        cls._lib = ctypes.CDLL(lib_path)
+
+        cls._lib.enable_vtimeline.argtypes = []
+        cls._lib.enable_vtimeline.restype = ctypes.c_int
+
+        cls._lib.disable_vtimeline.argtypes = []
+        cls._lib.disable_vtimeline.restype = ctypes.c_int
+
+    def __init__(self):
+        raise RuntimeError("Use initialize to init CUPTI")
+
+    @staticmethod
+    def enable():
+        if CUPTI._lib is None:
+            return
+        if CUPTI._lib.enable_vtimeline() != 0:
             print("Failed to enable CUDAVTimeline")
 
-    def disable(self):
-        self.lib.disable_vtimeline()
+    @staticmethod
+    def disable():
+        if CUPTI._lib is None:
+            return
+        CUPTI._lib.disable_vtimeline()
 
 
 def __create_async_rotating_file_handler(
@@ -143,17 +207,21 @@ def __create_logger(log_root_dir: str, logger_name: str, formatter: logging.Form
     logger.propagate = False
 
 
-def vinit(enable_cuda: bool = True):
+_vinit_initialized = False
+
+
+def vinit():
+    global _vinit_initialized
+    if _vinit_initialized:
+        return
+
     tracepoint_module_setup()
-    if enable_cuda:
-        cudavtimeline_module_setup()
+    CUPTI.initialize()
+    MemTracePoint.initialize()
+    _vinit_initialized = True
 
 
 def tracepoint_module_setup():
-    # cupti in LOGGER_DIR/cupti/rank_i.log
-    # tracepoint in LOGGER_DIR/TracePoint/rank_i.log
-    # VTimeline in LOGGER_DIR/VTimeline/rank_i.log
-
     log_dir = os.getenv("VTIMELINE_LOGGER_DIR", "/var/log")
 
     default_formatter = logging.Formatter(
@@ -162,13 +230,4 @@ def tracepoint_module_setup():
 
     __create_logger(log_dir, "VLog", default_formatter)
     __create_logger(log_dir, "TracePoint", TracePointFormatter())
-
-
-def cudavtimeline_module_setup(lib_path: str = "/usr/local/lib/libvtimeline.so"):
-    if not os.path.isfile(lib_path):
-        print(" >>> no vtimeline to trace cuda activity")
-        return
-
-    cupti = CUDAVTimeLine(lib_path)
-    cupti.enable()
-    atexit.register(cupti.disable)
+    __create_logger(log_dir, "MemTracePoint", MemTracePointFormatter())

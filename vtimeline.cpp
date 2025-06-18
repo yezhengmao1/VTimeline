@@ -42,6 +42,8 @@ std::vector<std::pair<buffer_ptr, size_t>> g_process_buffer;
 
 std::uint8_t g_need_to_stop = 0;
 
+std::uint8_t g_is_init = 0;
+
 // ##################################//
 //  prepare the name of dir and path //
 // ##################################//
@@ -342,9 +344,12 @@ void enable_cupti_activity() {
 } // namespace
 
 extern "C" int enable_vtimeline(void) {
-    ::init_buffer_process_task();
+    if (g_is_init == 1) {
+        return 1;
+    }
 
     ::init_spdlog_env();
+    ::init_buffer_process_task();
 
     if (!::init_cupti_env()) {
         g_need_to_stop = 1;
@@ -358,13 +363,23 @@ extern "C" int enable_vtimeline(void) {
         return 1;
     }
 
+    g_is_init = 1;
+
     ::enable_cupti_activity();
 
     return 0;
 }
 
 extern "C" int disable_vtimeline(void) {
-    cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED);
+    if (g_is_init == 0) {
+        return 1;
+    }
+
+    CUptiResult result = cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED);
+    if (result != CUPTI_SUCCESS) {
+        std::cerr << "Failed to flush all activity, error code: "
+                  << static_cast<int>(result) << "\n";
+    }
 
     g_need_to_stop = 1;
     g_client_buffer_notify.notify_one();
@@ -373,6 +388,14 @@ extern "C" int disable_vtimeline(void) {
     if (g_consume_buffer_from_cupti_task.joinable()) {
         g_consume_buffer_from_cupti_task.join();
     }
+
+    result = cuptiFinalize();
+    if (result != CUPTI_SUCCESS) {
+        std::cerr << "Failed to finalize cupti, error code: " << static_cast<int>(result)
+                  << "\n";
+    }
+
+    g_is_init = 0;
 
     return 0;
 }

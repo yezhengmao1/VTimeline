@@ -57,6 +57,22 @@ class TraceEvent:
         }
 
 
+@dataclass
+class MemoryDump:
+    timestamp: int
+    process_id: str
+    memory: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ts": self.timestamp,
+            "name": "GPUMem",
+            "pid": self.process_id,
+            "ph": "C",
+            "args": {"Free": self.memory},
+        }
+
+
 def parse_trace_line(line: str) -> Optional[TraceEvent]:
     try:
         parts = line.strip().split(",")
@@ -75,6 +91,14 @@ def parse_trace_line(line: str) -> Optional[TraceEvent]:
             phase = parts[5]
 
             return TraceEvent(timestamp, process_id, thread_id, category, name, phase)
+        if len(parts) == 3:
+            timestamp = int(parts[0])  # default is microsecond
+            if timestamp == 0:
+                return None
+            process_id = "rank" + str(int(parts[1]))
+            memory = int(parts[2]) / 1024 / 1024
+            return MemoryDump(timestamp, process_id, memory)
+
         return None
     except (ValueError, IndexError):
         print("parse error")
@@ -133,6 +157,7 @@ def main():
 
         if os.path.isdir(input_path):
             for root, dirs, files in os.walk(input_path):
+                # .*TracePoint
                 if "CUPTI" in root or "TracePoint" in root:
                     for file in files:
                         file_path = os.path.join(root, file)

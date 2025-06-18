@@ -1,15 +1,15 @@
 from .tracepoint import (
     vinit,
-    cudavtimeline_module_setup,
-    tracepoint_module_setup,
     VLogger,
     TracePoint,
+    MemTracePoint,
+    CUPTI,
 )
 
 __all__ = [
     "vinit",
-    "cudavtimeline_module_setup",
-    "tracepoint_module_setup",
     "VLogger",
     "TracePoint",
+    "MemTracePoint",
+    "CUPTI",
 ]
