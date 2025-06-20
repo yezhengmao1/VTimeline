@@ -27,6 +27,9 @@
 #define CLIENT_BUFFER_NUM 10
 #define CLIENT_BUFFER_LIMIT 32
 
+#define VTIMELINE_SUCCESS 0
+#define VTIMELINE_ERROR 1
+
 namespace {
 
 using buffer_ptr = std::unique_ptr<uint8_t[]>;
@@ -40,9 +43,10 @@ std::condition_variable g_client_buffer_notify;
 std::mutex g_process_buffer_mutex;
 std::vector<std::pair<buffer_ptr, size_t>> g_process_buffer;
 
-std::uint8_t g_need_to_stop = 0;
+bool g_need_to_stop = false;
 
-std::uint8_t g_is_init = 0;
+bool g_is_init = false;
+bool g_is_enable = false;
 
 // ##################################//
 //  prepare the name of dir and path //
@@ -250,7 +254,7 @@ void init_buffer_process_task() {
         return std::make_unique<uint8_t[]>(CLIENT_BUFFER_SIZE);
     });
 
-    g_need_to_stop = 0;
+    g_need_to_stop = false;
 
     g_consume_buffer_from_cupti_task = std::move(std::thread([]() {
         while (true) {
@@ -343,36 +347,43 @@ void enable_cupti_activity() {
 
 } // namespace
 
-extern "C" int enable_vtimeline(void) {
-    if (g_is_init == 1) {
-        return 1;
+extern "C" int init_vtimeline(void) {
+    if (g_is_init) {
+        return VTIMELINE_SUCCESS;
     }
 
     ::init_spdlog_env();
     ::init_buffer_process_task();
 
-    if (!::init_cupti_env()) {
-        g_need_to_stop = 1;
-        g_client_buffer_notify.notify_one();
+    g_is_init = true;
 
-        if (!g_consume_buffer_from_cupti_task.joinable()) {
-            return 1;
-        }
+    return CUPTI_SUCCESS;
+}
 
-        g_consume_buffer_from_cupti_task.join();
-        return 1;
+
+extern "C" int enable_vtimeline(void) {
+    if (!g_is_init) {
+        return VTIMELINE_ERROR;
     }
 
-    g_is_init = 1;
+    if (g_is_enable) {
+        return VTIMELINE_SUCCESS;
+    }
+
+    if (!::init_cupti_env()) {
+        return VTIMELINE_ERROR;
+    }
 
     ::enable_cupti_activity();
 
-    return 0;
+    g_is_enable = true;
+
+    return VTIMELINE_SUCCESS;
 }
 
 extern "C" int disable_vtimeline(void) {
-    if (g_is_init == 0) {
-        return 1;
+    if (!g_is_init || !g_is_enable) {
+        return VTIMELINE_ERROR;
     }
 
     CUptiResult result = cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED);
@@ -381,21 +392,26 @@ extern "C" int disable_vtimeline(void) {
                   << static_cast<int>(result) << "\n";
     }
 
-    g_need_to_stop = 1;
-    g_client_buffer_notify.notify_one();
-
-    // wait the backgroud task
-    if (g_consume_buffer_from_cupti_task.joinable()) {
-        g_consume_buffer_from_cupti_task.join();
-    }
-
     result = cuptiFinalize();
     if (result != CUPTI_SUCCESS) {
         std::cerr << "Failed to finalize cupti, error code: " << static_cast<int>(result)
                   << "\n";
     }
 
-    g_is_init = 0;
+    g_is_enable = false;
 
-    return 0;
+    return CUPTI_SUCCESS;
+}
+
+extern "C" int deinit_vtimeline(void) {
+    ::disable_vtimeline();
+
+    g_need_to_stop = true;
+    g_client_buffer_notify.notify_one();
+
+    if (g_consume_buffer_from_cupti_task.joinable()) {
+        g_consume_buffer_from_cupti_task.join();
+    }
+    
+    return CUPTI_SUCCESS;
 }

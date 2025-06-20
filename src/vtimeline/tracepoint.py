@@ -138,6 +138,7 @@ class CUPTI:
             print(" >>> [vtimeline] no cupti lib to trace cuda activity.")
             cls._lib = None
             return
+
         cls._lib = ctypes.CDLL(lib_path)
 
         cls._lib.enable_vtimeline.argtypes = []
@@ -146,21 +147,37 @@ class CUPTI:
         cls._lib.disable_vtimeline.argtypes = []
         cls._lib.disable_vtimeline.restype = ctypes.c_int
 
+        cls._lib.init_vtimeline.argtypes = []
+        cls._lib.init_vtimeline.restype = ctypes.c_int
+
+        cls._lib.deinit_vtimeline.argtypes = []
+        cls._lib.deinit_vtimeline.restype = ctypes.c_int
+
+        CUPTI._lib.init_vtimeline()
+
+        atexit.register(CUPTI._lib.deinit_vtimeline)
+
     def __init__(self):
         raise RuntimeError("Use initialize to init CUPTI")
 
     @staticmethod
     def enable():
+        tp = TracePoint("cupti-enable", "CUPTI")
+        tp.begin()
         if CUPTI._lib is None:
             return
         if CUPTI._lib.enable_vtimeline() != 0:
             print("Failed to enable CUDAVTimeline")
+        tp.end()
 
     @staticmethod
     def disable():
+        tp = TracePoint("cupti-disable", "CUPTI")
+        tp.begin()
         if CUPTI._lib is None:
             return
         CUPTI._lib.disable_vtimeline()
+        tp.end()
 
 
 def __create_async_rotating_file_handler(

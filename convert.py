@@ -5,9 +5,10 @@ import json
 import math
 import sys
 import argparse
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from pathlib import Path
+from collections import defaultdict
 
 parser = argparse.ArgumentParser(description="Convert log files to JSON format")
 
@@ -55,6 +56,10 @@ class TraceEvent:
             "name": self.name,
             "ph": self.phase,
         }
+
+    def get_identifier(self) -> Tuple[str, str, str, str]:
+        """Return a unique identifier for matching B and E events"""
+        return (self.process_id, self.thread_id, self.category, self.name)
 
 
 @dataclass
@@ -105,13 +110,78 @@ def parse_trace_line(line: str) -> Optional[TraceEvent]:
         return None
 
 
+def filter_incomplete_events(events: List[TraceEvent]) -> List[TraceEvent]:
+    """Filter out events that have 'B' phase but no matching 'E' phase"""
+    # Group events by their identifier
+    begin_events = defaultdict(list)  # events with phase 'B'
+    end_events = defaultdict(list)  # events with phase 'E'
+    other_events = []  # events with other phases
+
+    for event in events:
+        if event.phase == "B":
+            identifier = event.get_identifier()
+            begin_events[identifier].append(event)
+        elif event.phase == "E":
+            identifier = event.get_identifier()
+            end_events[identifier].append(event)
+        else:
+            other_events.append(event)
+
+    filtered_events = []
+    incomplete_count = 0
+
+    # Process begin events and only keep those with matching end events
+    for identifier, b_events in begin_events.items():
+        e_events = end_events.get(identifier, [])
+
+        # Sort events by timestamp
+        b_events.sort(key=lambda x: x.timestamp)
+        e_events.sort(key=lambda x: x.timestamp)
+
+        # Match begin events with end events
+        matched_pairs = 0
+        min_count = min(len(b_events), len(e_events))
+
+        # Keep matched pairs
+        for i in range(min_count):
+            filtered_events.append(b_events[i])
+            filtered_events.append(e_events[i])
+            matched_pairs += 1
+
+        # Count incomplete events
+        incomplete_count += len(b_events) - matched_pairs
+
+        if len(b_events) != len(e_events):
+            print(
+                f"Warning: Event '{identifier[3]}' in {identifier[0]}/{identifier[1]} "
+                f"has {len(b_events)} 'B' events but {len(e_events)} 'E' events. "
+                f"Keeping {matched_pairs} matched pairs."
+            )
+
+    # Add unmatched end events (these are also incomplete)
+    for identifier, e_events in end_events.items():
+        if identifier not in begin_events:
+            incomplete_count += len(e_events)
+            print(
+                f"Warning: Found {len(e_events)} 'E' events for '{identifier[3]}' "
+                f"without matching 'B' events. Removing them."
+            )
+
+    # Add other events (non B/E events)
+    filtered_events.extend(other_events)
+
+    print(f"Filtered out {incomplete_count} incomplete trace events")
+    return filtered_events
+
+
 def process_trace_data(
     input_file: Path,
     min_time: Optional[int] = None,
     max_time: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Process trace data and convert to Chrome Trace format."""
-    events = []
+    trace_events = []
+    memory_events = []
 
     with open(input_file, "r") as f:
         for line_num, line in enumerate(f, 1):
@@ -128,9 +198,21 @@ def process_trace_data(
                 continue
             if max_time is not None and event.timestamp > max_time:
                 continue
-            events.append(event.to_dict())
 
-    return events
+            if isinstance(event, TraceEvent):
+                trace_events.append(event)
+            elif isinstance(event, MemoryDump):
+                memory_events.append(event)
+
+    # Filter incomplete events if requested
+    trace_events = filter_incomplete_events(trace_events)
+
+    # Convert all events to dict
+    all_events = []
+    all_events.extend([event.to_dict() for event in trace_events])
+    all_events.extend([event.to_dict() for event in memory_events])
+
+    return all_events
 
 
 def generate_chrome_trace_json(events: List[Dict[str, Any]]) -> Dict[str, Any]:
