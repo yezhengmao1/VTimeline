@@ -16,6 +16,30 @@ _ROTATE_FILE_MAX_SIZE = 200 * 1024 * 1024
 
 VLogger = logging.getLogger("VLog")
 
+try:
+    import torch
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
+try:
+    import triton
+
+    TRITON_AVAILABLE = True
+except ImportError:
+    TRITON_AVAILABLE = False
+
+if TRITON_AVAILABLE:
+
+    @triton.jit
+    def marker_kernel_begin(marker_id):
+        pass
+
+    @triton.jit
+    def marker_kernel_end(marker_id):
+        pass
+
 
 class TracePointFormatter(logging.Formatter):
     def __init__(self):
@@ -71,15 +95,34 @@ class MemTracePointFormatter(logging.Formatter):
 
 
 class TracePoint:
-    def __init__(self, event_name: str, cat_name: str):
+    def __init__(self, event_name: str, cat_name: str, gpu: bool = False):
         self.logger = logging.getLogger("TracePoint")
         self.name = event_name
         self.cat = cat_name
+        self.gpu = gpu
 
     def begin(self):
+        if (
+            self.gpu
+            and TRITON_AVAILABLE
+            and TORCH_AVAILABLE
+            and CUPTI.is_enable
+            and CUPTI.sync_stream is not None
+        ):
+            with torch.cuda.stream(CUPTI.sync_stream):
+                marker_kernel_begin[(1,)](0)
         self.record(self.name, self.cat, "B")
 
     def end(self):
+        if (
+            self.gpu
+            and TRITON_AVAILABLE
+            and TORCH_AVAILABLE
+            and CUPTI.is_enable
+            and CUPTI.sync_stream is not None
+        ):
+            with torch.cuda.stream(CUPTI.sync_stream):
+                marker_kernel_end[(1,)](0)
         self.record(self.name, self.cat, "E")
 
     def record(self, event_name: str, cat_name: str, ph: str):
@@ -107,22 +150,14 @@ class MemTracePoint:
     @classmethod
     def initialize(cls):
         cls._logger = logging.getLogger("MemTracePoint")
-        try:
-            import torch
-
-            cls._is_cuda_env = torch.cuda.is_available()
-        except Exception:
-            cls._is_cuda_env = False
 
     def __init__(self):
         raise RuntimeError("Use initialize to init CUPTI")
 
     @staticmethod
     def record():
-        if not MemTracePoint._is_cuda_env:
+        if not TORCH_AVAILABLE:
             return
-
-        import torch
 
         free, _ = torch.cuda.mem_get_info(torch.cuda.current_device())
 
@@ -131,6 +166,8 @@ class MemTracePoint:
 
 class CUPTI:
     _lib = None
+    is_enable = False
+    sync_stream = None
 
     @classmethod
     def initialize(cls, lib_path: str = "/usr/local/lib/libvtimeline.so"):
@@ -155,6 +192,11 @@ class CUPTI:
 
         CUPTI._lib.init_vtimeline()
 
+        if TORCH_AVAILABLE:
+            CUPTI.sync_stream = torch.cuda.Stream()
+        else:
+            CUPTI.sync_stream = None
+
         atexit.register(CUPTI._lib.deinit_vtimeline)
 
     def __init__(self):
@@ -169,6 +211,7 @@ class CUPTI:
         if CUPTI._lib.enable_vtimeline() != 0:
             print("Failed to enable CUDAVTimeline")
         tp.end()
+        CUPTI.is_enable = True
 
     @staticmethod
     def disable():
@@ -178,6 +221,7 @@ class CUPTI:
             return
         CUPTI._lib.disable_vtimeline()
         tp.end()
+        CUPTI.is_enable = False
 
 
 def __create_async_rotating_file_handler(

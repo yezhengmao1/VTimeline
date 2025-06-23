@@ -360,7 +360,6 @@ extern "C" int init_vtimeline(void) {
     return CUPTI_SUCCESS;
 }
 
-
 extern "C" int enable_vtimeline(void) {
     if (!g_is_init) {
         return VTIMELINE_ERROR;
@@ -412,6 +411,6 @@ extern "C" int deinit_vtimeline(void) {
     if (g_consume_buffer_from_cupti_task.joinable()) {
         g_consume_buffer_from_cupti_task.join();
     }
-    
+
     return CUPTI_SUCCESS;
 }
