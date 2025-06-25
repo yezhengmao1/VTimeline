@@ -10,14 +10,12 @@ import logging.handlers
 ### Tracepoint for vtimeline ###
 ################################
 
-
 _ROTATE_FILE_COUNT = 5
 _ROTATE_FILE_MAX_SIZE = 200 * 1024 * 1024
 
-VLogger = logging.getLogger("VLog")
-
 try:
     import torch
+    import torch.distributed
 
     TORCH_AVAILABLE = True
 except ImportError:
@@ -30,15 +28,31 @@ try:
 except ImportError:
     TRITON_AVAILABLE = False
 
-if TRITON_AVAILABLE:
 
-    @triton.jit
-    def marker_kernel_begin(marker_id):
-        pass
+class VTimeLineLogger(logging.Logger):
+    def __init__(self, name, level=logging.NOTSET):
+        super().__init__(name, level)
 
-    @triton.jit
-    def marker_kernel_end(marker_id):
-        pass
+    def info_rank0(self, msg, *args, **kwargs):
+        if TORCH_AVAILABLE and torch.distributed.is_initialized():
+            if torch.distributed.get_rank() == 0:
+                super()._log(logging.INFO, msg, args, **kwargs)
+        else:
+            super()._log(logging.INFO, msg, args, **kwargs)
+
+
+logging.setLoggerClass(VTimeLineLogger)
+VLogger = logging.getLogger("VLog")
+
+
+@triton.jit
+def marker_kernel_begin(marker_id):
+    pass
+
+
+@triton.jit
+def marker_kernel_end(marker_id):
+    pass
 
 
 class TracePointFormatter(logging.Formatter):
@@ -271,17 +285,6 @@ def __create_logger(log_root_dir: str, logger_name: str, formatter: logging.Form
 _vinit_initialized = False
 
 
-def vinit():
-    global _vinit_initialized
-    if _vinit_initialized:
-        return
-
-    tracepoint_module_setup()
-    CUPTI.initialize()
-    MemTracePoint.initialize()
-    _vinit_initialized = True
-
-
 def tracepoint_module_setup():
     log_dir = os.getenv("VTIMELINE_LOGGER_DIR", "/var/log")
 
@@ -292,3 +295,14 @@ def tracepoint_module_setup():
     __create_logger(log_dir, "VLog", default_formatter)
     __create_logger(log_dir, "TracePoint", TracePointFormatter())
     __create_logger(log_dir, "MemTracePoint", MemTracePointFormatter())
+
+
+def vinit():
+    global _vinit_initialized
+    if _vinit_initialized:
+        return
+
+    tracepoint_module_setup()
+    CUPTI.initialize()
+    MemTracePoint.initialize()
+    _vinit_initialized = True

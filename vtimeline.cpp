@@ -332,7 +332,7 @@ bool init_cupti_env() {
 void enable_cupti_activity() {
     std::array activity_kinds = {
         CUPTI_ACTIVITY_KIND_KERNEL,
-        CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL,
+        // CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL,
         CUPTI_ACTIVITY_KIND_MEMCPY,
         CUPTI_ACTIVITY_KIND_MEMCPY2,
     };
