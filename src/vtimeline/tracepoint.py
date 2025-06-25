@@ -25,6 +25,12 @@ try:
     import triton
 
     TRITON_AVAILABLE = True
+
+    @triton.jit()
+    def marker_kernel():
+        pass
+
+
 except ImportError:
     TRITON_AVAILABLE = False
 
@@ -43,16 +49,6 @@ class VTimeLineLogger(logging.Logger):
 
 logging.setLoggerClass(VTimeLineLogger)
 VLogger = logging.getLogger("VLog")
-
-
-@triton.jit
-def marker_kernel_begin(marker_id):
-    pass
-
-
-@triton.jit
-def marker_kernel_end(marker_id):
-    pass
 
 
 class TracePointFormatter(logging.Formatter):
@@ -124,7 +120,7 @@ class TracePoint:
             and CUPTI.sync_stream is not None
         ):
             with torch.cuda.stream(CUPTI.sync_stream):
-                marker_kernel_begin[(1,)](0)
+                marker_kernel[(1,)]()
         self.record(self.name, self.cat, "B")
 
     def end(self):
@@ -136,7 +132,7 @@ class TracePoint:
             and CUPTI.sync_stream is not None
         ):
             with torch.cuda.stream(CUPTI.sync_stream):
-                marker_kernel_end[(1,)](0)
+                marker_kernel[(1,)]()
         self.record(self.name, self.cat, "E")
 
     def record(self, event_name: str, cat_name: str, ph: str):
