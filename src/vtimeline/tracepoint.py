@@ -1,8 +1,10 @@
 import os
+import time
 import queue
 import atexit
 import ctypes
 import logging
+import threading
 from pathlib import Path
 import logging.handlers
 
@@ -27,8 +29,10 @@ try:
     TRITON_AVAILABLE = True
 
     @triton.jit()
-    def marker_kernel():
+    def vtimeline_marker_kernel():
         pass
+
+    vtimeline_marker_kernel[(1,)]()
 
 
 except ImportError:
@@ -120,7 +124,7 @@ class TracePoint:
             and CUPTI.sync_stream is not None
         ):
             with torch.cuda.stream(CUPTI.sync_stream):
-                marker_kernel[(1,)]()
+                vtimeline_marker_kernel[(1,)]()
         self.record(self.name, self.cat, "B")
 
     def end(self):
@@ -132,7 +136,7 @@ class TracePoint:
             and CUPTI.sync_stream is not None
         ):
             with torch.cuda.stream(CUPTI.sync_stream):
-                marker_kernel[(1,)]()
+                vtimeline_marker_kernel[(1,)]()
         self.record(self.name, self.cat, "E")
 
     def record(self, event_name: str, cat_name: str, ph: str):
@@ -177,6 +181,7 @@ class MemTracePoint:
 class CUPTI:
     _lib = None
     is_enable = False
+    enable_times = 0
     sync_stream = None
 
     @classmethod
@@ -207,6 +212,9 @@ class CUPTI:
         else:
             CUPTI.sync_stream = None
 
+        thread = threading.Thread(target=cls._monitor_cupti_flag, daemon=True)
+        thread.start()
+
         atexit.register(CUPTI._lib.deinit_vtimeline)
 
     def __init__(self):
@@ -214,6 +222,9 @@ class CUPTI:
 
     @staticmethod
     def enable():
+        if CUPTI.enable_times <= 0:
+            return
+
         tp = TracePoint("cupti-enable", "CUPTI")
         tp.begin()
         if CUPTI._lib is None:
@@ -222,6 +233,7 @@ class CUPTI:
             print("Failed to enable CUDAVTimeline")
         tp.end()
         CUPTI.is_enable = True
+        CUPTI.enable_times -= 1
 
     @staticmethod
     def disable():
@@ -232,6 +244,48 @@ class CUPTI:
         CUPTI._lib.disable_vtimeline()
         tp.end()
         CUPTI.is_enable = False
+
+    @classmethod
+    def _monitor_cupti_flag(cls):
+        cupti_flag_dir = Path(os.getenv("CUPTI_HOME", "/tmp"))
+        last_check_time = None
+
+        print(" >>> [vtimeline] CUPTI monitor thread started.")
+
+        while True:
+            time.sleep(5)
+
+            if (
+                not cupti_flag_dir.exists()
+                or not cupti_flag_dir.is_dir()
+                or CUPTI.enable_times > 0
+            ):
+                continue
+
+            cupti_files = list(cupti_flag_dir.glob(".cupti.*"))
+
+            if len(cupti_files) <= 0:
+                continue
+
+            # only get one file
+            cupti_file = cupti_files[0]
+
+            if not cupti_file.is_file() or (
+                last_check_time is not None
+                and cupti_file.stat().st_mtime <= last_check_time
+            ):
+                continue
+
+            try:
+                enable_count = int(cupti_file.name[7:])
+                print(
+                    f" >>> [vtimeline] CUPTI can now be enabled {enable_count} times."
+                )
+                CUPTI.enable_times = enable_count
+                last_check_time = cupti_file.stat().st_mtime
+
+            except ValueError:
+                continue
 
 
 def __create_async_rotating_file_handler(
