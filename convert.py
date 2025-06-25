@@ -2,6 +2,7 @@
 
 import os
 import json
+import gzip
 import math
 import sys
 import argparse
@@ -263,9 +264,11 @@ def main():
         trace_json = generate_chrome_trace_json(all_events)
 
         # Write to output file
+        if not output_file.endswith(".gz"):
+            output_file += ".gz"
         print(f"\nWriting Chrome Trace JSON to {output_file}...")
-        with open(output_file, "w") as f:
-            json.dump(trace_json, f, indent=2)
+        with gzip.open(output_file, "wt", encoding="utf-8") as f:
+            json.dump(trace_json, f, separators=(",", ":"))
 
         print("Successfully converted trace data!")
         print(f"Open {output_file} in Chrome at chrome://tracing/ to visualize.")
