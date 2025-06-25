@@ -16,51 +16,47 @@
 
 **第1步：克隆项目源码并初始化依赖**
 
-Bash
-
-```python
+```bash
 # 从 GitHub 下载项目代码
 git clone https://github.com/yezhengmao1/VTimeline.git
 
 # 进入项目根目录
 cd VTimeline/
 
-    # 初始化并下载项目所需的子模块（如 spdlog 依赖库）
-    git submodule update --init --recursive
+# 初始化并下载项目所需的子模块（如 spdlog 依赖库）
+git submodule update --init --recursive
 ```
 
 **第2步：编译并安装 **`**spdlog**`** 依赖库**
 
 所有操作均在 `spdlog` 自己的目录内完成。
 
-Bash
 
-```python
+```bash
 # 进入 spdlog 库的源码目录
 cd libs/spdlog/
 
-    # 创建一个独立的 build 目录并进入，这可以保持源码目录整洁
-    mkdir build
-    cd build
+# 创建一个独立的 build 目录并进入，这可以保持源码目录整洁
+mkdir build
+cd build
 
-    # 运行 cmake，它会根据当前系统环境生成编译配置文件
-    cmake ..
+# 运行 cmake，它会根据当前系统环境生成编译配置文件
+cmake ..
 
-    # 使用您机器的所有CPU核心进行并行编译，以加快速度
-    make -j$(nproc)
+# 使用您机器的所有CPU核心进行并行编译，以加快速度
+make -j$(nproc)
 
-    # 将编译好的 spdlog 库安装到系统中，以便主项目可以找到它
-    # 注意：这一步通常需要管理员权限（sudo）
-    sudo make install
+# 将编译好的 spdlog 库安装到系统中，以便主项目可以找到它
+# 注意：这一步通常需要管理员权限（sudo）
+sudo make install
 ```
 
 **第3步：编译 VTimeline 主项目**
 
 `spdlog` 安装成功后，我们返回到 **VTimeline 的项目根目录**来编译主程序。
 
-Bash
 
-```python
+```bash
 # 关键：从 spdlog/build 目录返回到 VTimeline 的项目根目录
 cd ../../..
 
@@ -85,9 +81,8 @@ make -j$(nproc)
 
 **第4步：使用 pip 安装 VTimeline 的 Python 包**
 
-Bash
 
-```plain
+```bash
 # 从主项目的 build 目录返回到项目根目录
 cd ..
 
@@ -101,19 +96,16 @@ pip install -e .
 
 在**任何路径**下打开终端，启动 Python 解释器：
 
-Bash 吧 
 
-```plain
+```bash
 python
 ```
 
 然后在 Python 交互环境中输入：
 
-Python
-
-```plain
->>> import vtimeline
->>> print(vtimeline)
+```bash
+import vtimeline
+print(vtimeline)
 ```
 
 
