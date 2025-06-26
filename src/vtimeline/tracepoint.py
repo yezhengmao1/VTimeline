@@ -222,7 +222,7 @@ class CUPTI:
 
     @staticmethod
     def enable():
-        if CUPTI.enable_times <= 0:
+        if CUPTI.enable_times <= 0 or CUPTI.is_enable:
             return
 
         tp = TracePoint("cupti-enable", "CUPTI")
@@ -237,6 +237,9 @@ class CUPTI:
 
     @staticmethod
     def disable():
+        if not CUPTI.is_enable:
+            return
+
         tp = TracePoint("cupti-disable", "CUPTI")
         tp.begin()
         if CUPTI._lib is None:
