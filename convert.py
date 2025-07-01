@@ -278,7 +278,7 @@ def main():
                                 file_path, min_time=min_time, max_time=max_time, type="TracePoint"
                             )
                         )
-                elif "Memory" in root:
+                elif "MemTracePoint" in root:
                     for file in files:
                         file_path = os.path.join(root, file)
                         print(f" >> process file {root}/{file}")
@@ -287,7 +287,7 @@ def main():
                                 file_path, min_time=min_time, max_time=max_time, type="Memory"
                             )
                         )
-                elif "GpuUtilization" in root:
+                elif "GPUTracePoint" in root:
                     for file in files:
                         file_path = os.path.join(root, file)
                         print(f" >> process file {root}/{file}")
