@@ -11,19 +11,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from collections import defaultdict
 
-parser = argparse.ArgumentParser(description="Convert log files to JSON format")
+parser = argparse.ArgumentParser(description="Convert log files to JSON format")\
 
 parser.add_argument(
     "--input-file",
     help="Input log file path (e.g., rank_0.log)",
     type=str,
-    required=True,
+    default = "/workspace/log"
 )
 parser.add_argument(
     "--output-file",
     help="Output JSON file path (e.g., trace.json)",
     type=str,
-    required=True,
+    default = "/workspace/output"
 )
 parser.add_argument(
     "--min-time",
@@ -64,7 +64,7 @@ class TraceEvent:
 
 
 @dataclass
-class MemoryDump:
+class MemoryEvent:
     timestamp: int
     process_id: str
     memory: int
@@ -77,13 +77,28 @@ class MemoryDump:
             "ph": "C",
             "args": {"Free": self.memory},
         }
+    
+@dataclass
+class GpuUtilizationEvent:
+    timestamp: int
+    process_id: str
+    utilization: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ts": self.timestamp,
+            "name": "GPUMem",
+            "pid": self.process_id,
+            "ph": "C",
+            "args": {"Utilization": self.utilization},
+        }
 
 
-def parse_trace_line(line: str) -> Optional[TraceEvent]:
+def parse_trace_line(line: str, type: str):
     try:
         parts = line.strip().split(",")
 
-        if len(parts) == 6:
+        if type == "TracePoint":
             timestamp = int(parts[0])  # default is microsecond
             if timestamp == 0:
                 return None
@@ -97,13 +112,20 @@ def parse_trace_line(line: str) -> Optional[TraceEvent]:
             phase = parts[5]
 
             return TraceEvent(timestamp, process_id, thread_id, category, name, phase)
-        if len(parts) == 3:
+        elif type == "Memory":
             timestamp = int(parts[0])  # default is microsecond
             if timestamp == 0:
                 return None
             process_id = "rank" + str(int(parts[1]))
             memory = int(parts[2]) / 1024 / 1024
-            return MemoryDump(timestamp, process_id, memory)
+            return MemoryEvent(timestamp, process_id, memory)
+        elif type == "GpuUtilization":
+            timestamp = int(parts[0])  # default is microsecond
+            if timestamp == 0:
+                return None
+            process_id = "rank" + str(int(parts[1]))
+            utilization = int(parts[2])
+            return GpuUtilizationEvent(timestamp, process_id, utilization)
 
         return None
     except (ValueError, IndexError):
@@ -179,10 +201,13 @@ def process_trace_data(
     input_file: Path,
     min_time: Optional[int] = None,
     max_time: Optional[int] = None,
+    type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Process trace data and convert to Chrome Trace format."""
+    assert type in ["TracePoint", "Memory", "GpuUtilization"], "Invalid type specified"
     trace_events = []
     memory_events = []
+    gpu_events = []
 
     with open(input_file, "r") as f:
         for line_num, line in enumerate(f, 1):
@@ -190,7 +215,7 @@ def process_trace_data(
             if not line:
                 continue
 
-            event = parse_trace_line(line)
+            event = parse_trace_line(line, type)
             if not event:
                 print(f"Warning: Failed to parse line {line_num}: {line}")
                 continue
@@ -202,8 +227,10 @@ def process_trace_data(
 
             if isinstance(event, TraceEvent):
                 trace_events.append(event)
-            elif isinstance(event, MemoryDump):
+            elif isinstance(event, MemoryEvent):
                 memory_events.append(event)
+            elif isinstance(event, GpuUtilizationEvent):
+                gpu_events.append(event)
 
     # Filter incomplete events if requested
     trace_events = filter_incomplete_events(trace_events)
@@ -212,6 +239,7 @@ def process_trace_data(
     all_events = []
     all_events.extend([event.to_dict() for event in trace_events])
     all_events.extend([event.to_dict() for event in memory_events])
+    all_events.extend([event.to_dict() for event in gpu_events])
 
     return all_events
 
@@ -241,24 +269,35 @@ def main():
         if os.path.isdir(input_path):
             for root, dirs, files in os.walk(input_path):
                 # .*TracePoint
-                if "CUPTI" in root or "TracePoint" in root:
+                if "TracePoint" in root:
                     for file in files:
                         file_path = os.path.join(root, file)
                         print(f" >> process file {root}/{file}")
                         all_events.extend(
                             process_trace_data(
-                                file_path, min_time=min_time, max_time=max_time
+                                file_path, min_time=min_time, max_time=max_time, type="TracePoint"
+                            )
+                        )
+                elif "Memory" in root:
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        print(f" >> process file {root}/{file}")
+                        all_events.extend(
+                            process_trace_data(
+                                file_path, min_time=min_time, max_time=max_time, type="Memory"
+                            )
+                        )
+                elif "GpuUtilization" in root:
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        print(f" >> process file {root}/{file}")
+                        all_events.extend(
+                            process_trace_data(
+                                file_path, min_time=min_time, max_time=max_time, type="GpuUtilization"
                             )
                         )
         else:
-            print(f" >> process file {input_path}")
-            all_events.extend(
-                process_trace_data(
-                    input_path,
-                    min_time=min_time,
-                    max_time=max_time,
-                )
-            )
+            exit("-1", f"Input path {input_path} is not a directory")
 
         # Generate Chrome Trace JSON
         trace_json = generate_chrome_trace_json(all_events)

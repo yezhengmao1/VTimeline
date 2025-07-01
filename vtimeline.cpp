@@ -198,10 +198,10 @@ void consume_record_from_buffer(CUpti_Activity *record) {
         uint32_t src_device = activity->srcDeviceId;
         uint32_t dst_device = activity->dstDeviceId;
 
-        spdlog::info("{},{},{},P2P,d{}-d{},B", start_ts, g_rank, stream_id, "P2P",
-                     src_device, dst_device);
-        spdlog::info("{},{},{},P2P,d{}-d{},E", end_ts, g_rank, stream_id, "P2P",
-                     src_device, dst_device);
+        spdlog::info("{},{},{},P2P,gpu{}-gpu{},B", start_ts, g_rank, stream_id, src_device,
+                     dst_device);
+        spdlog::info("{},{},{},P2P,gpu{}-gpu{},E", end_ts, g_rank, stream_id, src_device,
+                     dst_device);
         break;
     }
     default:
