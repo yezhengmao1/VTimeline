@@ -144,4 +144,4 @@ ps:
 ```
 
 将导出.gz文件导入https://ui.perfetto.dev/即可查看，如下：
-![alt text](image.png)
+![alt text](images/image.png)
