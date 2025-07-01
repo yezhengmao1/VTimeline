@@ -3,7 +3,8 @@ from .tracepoint import (
     VLogger,
     TracePoint,
     MemTracePoint,
-    CUPTI,
+    GPUTracePoint,
+    # CUPTI,
 )
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     "VLogger",
     "TracePoint",
     "MemTracePoint",
-    "CUPTI",
+    "GPUTracePoint"
+    # "CUPTI",
 ]

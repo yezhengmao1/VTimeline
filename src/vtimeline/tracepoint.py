@@ -23,22 +23,6 @@ try:
 except ImportError:
     TORCH_AVAILABLE = False
 
-try:
-    import triton
-
-    TRITON_AVAILABLE = True
-
-    @triton.jit()
-    def vtimeline_marker_kernel():
-        pass
-
-    vtimeline_marker_kernel[(1,)]()
-
-
-except ImportError:
-    TRITON_AVAILABLE = False
-
-
 class VTimeLineLogger(logging.Logger):
     def __init__(self, name, level=logging.NOTSET):
         super().__init__(name, level)
@@ -107,6 +91,24 @@ class MemTracePointFormatter(logging.Formatter):
 
         return format_str
 
+class GPUTracePointFormatter(logging.Formatter):
+    def __init__(self):
+        self.pid = os.getenv("RANK", -1)  # global rank
+
+    def format(self, record: logging.LogRecord):
+        try:
+            format_str = ",".join(
+                [
+                    str(int(record.created * 1000000)),  # microsecond
+                    str(self.pid),  # global rank
+                    record.getMessage(),  #
+                ]
+            )
+        except Exception as e:
+            format_str = f"error logger format : {str(e)}"
+
+        return format_str
+
 
 class TracePoint:
     def __init__(self, event_name: str, cat_name: str, gpu: bool = False):
@@ -116,27 +118,9 @@ class TracePoint:
         self.gpu = gpu
 
     def begin(self):
-        if (
-            self.gpu
-            and TRITON_AVAILABLE
-            and TORCH_AVAILABLE
-            and CUPTI.is_enable
-            and CUPTI.sync_stream is not None
-        ):
-            with torch.cuda.stream(CUPTI.sync_stream):
-                vtimeline_marker_kernel[(1,)]()
         self.record(self.name, self.cat, "B")
 
     def end(self):
-        if (
-            self.gpu
-            and TRITON_AVAILABLE
-            and TORCH_AVAILABLE
-            and CUPTI.is_enable
-            and CUPTI.sync_stream is not None
-        ):
-            with torch.cuda.stream(CUPTI.sync_stream):
-                vtimeline_marker_kernel[(1,)]()
         self.record(self.name, self.cat, "E")
 
     def record(self, event_name: str, cat_name: str, ph: str):
@@ -178,117 +162,26 @@ class MemTracePoint:
         MemTracePoint._logger.info(f"{free}")
 
 
-class CUPTI:
-    _lib = None
-    is_enable = False
-    enable_times = 0
-    sync_stream = None
+
+class GPUTracePoint:
+    _logger = None
+    _is_cuda_env = None
 
     @classmethod
-    def initialize(cls, lib_path: str = "/usr/local/lib/libvtimeline.so"):
-        if not os.path.isfile(lib_path):
-            print(" >>> [vtimeline] no cupti lib to trace cuda activity.")
-            cls._lib = None
-            return
-
-        cls._lib = ctypes.CDLL(lib_path)
-
-        cls._lib.enable_vtimeline.argtypes = []
-        cls._lib.enable_vtimeline.restype = ctypes.c_int
-
-        cls._lib.disable_vtimeline.argtypes = []
-        cls._lib.disable_vtimeline.restype = ctypes.c_int
-
-        cls._lib.init_vtimeline.argtypes = []
-        cls._lib.init_vtimeline.restype = ctypes.c_int
-
-        cls._lib.deinit_vtimeline.argtypes = []
-        cls._lib.deinit_vtimeline.restype = ctypes.c_int
-
-        CUPTI._lib.init_vtimeline()
-
-        if TORCH_AVAILABLE:
-            CUPTI.sync_stream = torch.cuda.Stream()
-        else:
-            CUPTI.sync_stream = None
-
-        thread = threading.Thread(target=cls._monitor_cupti_flag, daemon=True)
-        thread.start()
-
-        atexit.register(CUPTI._lib.deinit_vtimeline)
+    def initialize(cls):
+        cls._logger = logging.getLogger("GPUTracePoint")
 
     def __init__(self):
         raise RuntimeError("Use initialize to init CUPTI")
 
     @staticmethod
-    def enable():
-        if CUPTI.enable_times <= 0 or CUPTI.is_enable:
+    def record():
+        if not TORCH_AVAILABLE:
             return
 
-        tp = TracePoint("cupti-enable", "CUPTI")
-        tp.begin()
-        if CUPTI._lib is None:
-            return
-        if CUPTI._lib.enable_vtimeline() != 0:
-            print("Failed to enable CUDAVTimeline")
-        tp.end()
-        CUPTI.is_enable = True
-        CUPTI.enable_times -= 1
+        util = torch.cuda.utilization(torch.cuda.current_device())
 
-    @staticmethod
-    def disable():
-        if not CUPTI.is_enable:
-            return
-
-        tp = TracePoint("cupti-disable", "CUPTI")
-        tp.begin()
-        if CUPTI._lib is None:
-            return
-        CUPTI._lib.disable_vtimeline()
-        tp.end()
-        CUPTI.is_enable = False
-
-    @classmethod
-    def _monitor_cupti_flag(cls):
-        cupti_flag_dir = Path(os.getenv("CUPTI_HOME", "/tmp"))
-        last_check_time = None
-
-        print(" >>> [vtimeline] CUPTI monitor thread started.")
-
-        while True:
-            time.sleep(5)
-
-            if (
-                not cupti_flag_dir.exists()
-                or not cupti_flag_dir.is_dir()
-                or CUPTI.enable_times > 0
-            ):
-                continue
-
-            cupti_files = list(cupti_flag_dir.glob(".cupti.*"))
-
-            if len(cupti_files) <= 0:
-                continue
-
-            # only get one file
-            cupti_file = cupti_files[0]
-
-            if not cupti_file.is_file() or (
-                last_check_time is not None
-                and cupti_file.stat().st_mtime <= last_check_time
-            ):
-                continue
-
-            try:
-                enable_count = int(cupti_file.name[7:])
-                print(
-                    f" >>> [vtimeline] CUPTI can now be enabled {enable_count} times."
-                )
-                CUPTI.enable_times = enable_count
-                last_check_time = cupti_file.stat().st_mtime
-
-            except ValueError:
-                continue
+        GPUTracePoint._logger.info(f"{util}")
 
 
 def __create_async_rotating_file_handler(
@@ -339,15 +232,17 @@ _vinit_initialized = False
 
 
 def tracepoint_module_setup():
-    log_dir = os.getenv("VTIMELINE_LOGGER_DIR", "/var/log")
+    # log_dir = os.getenv("VTIMELINE_LOGGER_DIR", "/var/log")
+    log_dir = "/root/var/log"
 
     default_formatter = logging.Formatter(
         fmt="[%(levelname)s][%(process)d][%(name)s][%(asctime)s] %(message)s"
     )
 
-    __create_logger(log_dir, "VLog", default_formatter)
+    # __create_logger(log_dir, "VLog", default_formatter)
     __create_logger(log_dir, "TracePoint", TracePointFormatter())
     __create_logger(log_dir, "MemTracePoint", MemTracePointFormatter())
+    __create_logger(log_dir, "GPUTracePoint", GPUTracePointFormatter())
 
 
 def vinit():
@@ -356,6 +251,6 @@ def vinit():
         return
 
     tracepoint_module_setup()
-    CUPTI.initialize()
     MemTracePoint.initialize()
+    GPUTracePoint.initialize()
     _vinit_initialized = True
