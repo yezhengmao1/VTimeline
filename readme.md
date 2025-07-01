@@ -1,4 +1,4 @@
-#### **第一阶段：环境准备**
+# **环境准备**
 
 开始前，请确保您的系统已安装以下开发工具：
 
@@ -9,8 +9,7 @@
 + **Python 3** 和 **pip**
 
 ---
-
-#### **第二阶段：下载与编译**
+# **下载与编译**
 
 我们将严格按照目录结构，依次编译依赖库和主项目。
 
@@ -75,7 +74,7 @@ make -j$(nproc)
 
 ---
 
-#### **第三阶段：安装 Python 包并验证**
+# **安装 Python 包并验证**
 
 这是连接 C++ 后端和 Python 前端的最后一步。
 
@@ -108,4 +107,41 @@ import vtimeline
 print(vtimeline)
 ```
 
+---
+# **使用方法**
 
+```python
+# 从vtimeline按需导入监控工具
+from vtimeline import vinit, TracePoint, MemTracePoint, GpuTracePoint
+
+# 初始化logger环境
+vinit()
+
+# 使用TracePoint实现流程记录
+tp = TracePoint("Generation", "Gen")
+tp.begin()
+...(your code)
+tp.end()
+
+# 使用MemTracePoint实现GPU mem监控
+MemTracePoint.record()
+
+# 使用GpuTracePoint实现GPU 利用率监控
+GpuTracePoint.record()
+```
+
+**将log转化为json格式以可视化**
+```bash
+python convert --input-file /workspace/log --output-file /workspace/output
+```
+ps:
+```
+# 支持文件夹批量导入，需要确保文件夹结构为
+- wokspace/log
+    - GPUTracePoint/
+    - MemTracePoint/
+    - TracePoint/
+```
+
+将导出.gz文件导入https://ui.perfetto.dev/即可查看，如下：
+![alt text](image.png)
