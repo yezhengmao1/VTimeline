@@ -6,6 +6,7 @@ import ctypes
 import logging
 import threading
 from pathlib import Path
+from typing import List, Dict
 import logging.handlers
 
 ################################
@@ -84,7 +85,7 @@ class TracePointFormatter(logging.Formatter):
         return format_str
 
 
-class MemTracePointFormatter(logging.Formatter):
+class MetricFormatter(logging.Formatter):
     def __init__(self):
         self.pid = os.getenv("RANK", -1)  # global rank
 
@@ -104,19 +105,21 @@ class MemTracePointFormatter(logging.Formatter):
 
 
 class TracePoint:
-    def __init__(self, event_name: str, cat_name: str, gpu: bool = False):
+    def __init__(self, event_name: str, cat_name: str, stream=None):
         self.logger = logging.getLogger("TracePoint")
         self.name = event_name
         self.cat = cat_name
-        self.gpu = gpu
+        if TRITON_AVAILABLE and TORCH_AVAILABLE:
+            self.gpu_stream = stream
+        else:
+            self.gpu_stream = None
 
     def begin(self):
         if (
-            self.gpu
+            self.gpu_stream is not None
             and TRITON_AVAILABLE
             and TORCH_AVAILABLE
             and CUPTI.is_enable
-            and CUPTI.sync_stream is not None
         ):
             if self.name not in G_TP_NAME_TO_KERNEL_IDX:
                 if len(G_TP_NAME_TO_KERNEL_IDX) >= TOTAL_MARKER_NUM:
@@ -127,24 +130,23 @@ class TracePoint:
                 VLogger.info(f"TracePoint {self.name} marker id {idx}")
 
             kernel_func = BEGIN_KERNEL_FUNCS[G_TP_NAME_TO_KERNEL_IDX[self.name]]
-            with torch.cuda.stream(CUPTI.sync_stream):
+            with torch.cuda.stream(self.gpu_stream):
                 kernel_func[(1,)]()
         self.record(self.name, self.cat, "B")
 
     def end(self):
         if (
-            self.gpu
+            self.gpu_stream is not None
             and TRITON_AVAILABLE
             and TORCH_AVAILABLE
             and CUPTI.is_enable
-            and CUPTI.sync_stream is not None
         ):
             if self.name not in G_TP_NAME_TO_KERNEL_IDX:
                 VLogger.warn(f"TracePoint {self.name} without BEGIN!!!")
                 return
 
             kernel_func = END_KERNEL_FUNCS[G_TP_NAME_TO_KERNEL_IDX[self.name]]
-            with torch.cuda.stream(CUPTI.sync_stream):
+            with torch.cuda.stream(self.gpu_stream):
                 kernel_func[(1,)]()
         self.record(self.name, self.cat, "E")
 
@@ -166,16 +168,9 @@ class TracePoint:
         return False
 
 
-class MemTracePoint:
-    _logger = None
-    _is_cuda_env = None
-
-    @classmethod
-    def initialize(cls):
-        cls._logger = logging.getLogger("MemTracePoint")
-
+class MemRecorder:
     def __init__(self):
-        raise RuntimeError("Use initialize to init CUPTI")
+        raise RuntimeError("Use initialize to init MemRecorder")
 
     @staticmethod
     def record():
@@ -184,17 +179,46 @@ class MemTracePoint:
 
         free, _ = torch.cuda.mem_get_info(torch.cuda.current_device())
 
-        MemTracePoint._logger.info(f"{free}")
+        MetricRecorder.record("GPUMem", str(free))
+
+
+class MetricRecorder:
+    _logger_map: Dict[str, logging.Logger] = {}
+
+    @classmethod
+    def initialize(cls, logger_names: List[str]):
+        for name in logger_names:
+            MetricRecorder._logger_map[name] = logging.getLogger(name)
+
+    def __init__(self):
+        raise RuntimeError("Use initialize to init MetricRecorder")
+
+    @staticmethod
+    def record(logger_name: str, value: str):
+        if logger_name not in MetricRecorder._logger_map:
+            VLogger.warn("No MetricRecorder : {}".format(logger_name))
+            return
+        logger = MetricRecorder._logger_map[logger_name]
+        logger.info(f"{value}")
+
+    @staticmethod
+    def record_rank0(logger_name: str, value: str):
+        if TORCH_AVAILABLE and torch.distributed.is_initialized():
+            if torch.distributed.get_rank() == 0:
+                MetricRecorder.record(logger_name, value)
+        else:
+            MetricRecorder.record(logger_name, value)
 
 
 class CUPTI:
     _lib = None
     is_enable = False
     enable_times = 0
-    sync_stream = None
 
     @classmethod
-    def initialize(cls, lib_path: str = "/usr/local/lib/libvtimeline.so"):
+    def initialize(
+        cls, lib_path: str = os.path.join(os.path.dirname(__file__), "libvtimeline.so")
+    ):
         if not os.path.isfile(lib_path):
             print(" >>> [vtimeline] no cupti lib to trace cuda activity.")
             cls._lib = None
@@ -215,11 +239,6 @@ class CUPTI:
         cls._lib.deinit_vtimeline.restype = ctypes.c_int
 
         CUPTI._lib.init_vtimeline()
-
-        if TORCH_AVAILABLE:
-            CUPTI.sync_stream = torch.cuda.Stream()
-        else:
-            CUPTI.sync_stream = None
 
         thread = threading.Thread(target=cls._monitor_cupti_flag, daemon=True)
         thread.start()
@@ -347,8 +366,9 @@ def __create_logger(log_root_dir: str, logger_name: str, formatter: logging.Form
 _vinit_initialized = False
 
 
-def tracepoint_module_setup():
+def tracepoint_module_setup(metrics: List[str] = None):
     log_dir = os.getenv("VTIMELINE_LOGGER_DIR", "/var/log")
+    metric_dir = log_dir + "/Metrics"
 
     default_formatter = logging.Formatter(
         fmt="[%(levelname)s][%(process)d][%(name)s][%(asctime)s] %(message)s"
@@ -356,15 +376,16 @@ def tracepoint_module_setup():
 
     __create_logger(log_dir, "VLog", default_formatter)
     __create_logger(log_dir, "TracePoint", TracePointFormatter())
-    __create_logger(log_dir, "MemTracePoint", MemTracePointFormatter())
+    for metric in metrics:
+        __create_logger(metric_dir, metric, MetricFormatter())
 
 
-def vinit():
+def vinit(metrics: List[str] = ["GPUMem", "MFU"]):
     global _vinit_initialized
     if _vinit_initialized:
         return
 
-    tracepoint_module_setup()
+    tracepoint_module_setup(metrics)
     CUPTI.initialize()
-    MemTracePoint.initialize()
+    MetricRecorder.initialize(metrics)
     _vinit_initialized = True

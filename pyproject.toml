@@ -10,3 +10,6 @@ license = {text = "MIT"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+vtimeline = ["libvtimeline.so"]
