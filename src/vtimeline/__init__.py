@@ -2,7 +2,8 @@ from .tracepoint import (
     vinit,
     VLogger,
     TracePoint,
-    MemTracePoint,
+    MemRecorder,
+    MetricRecorder,
     CUPTI,
 )
 
@@ -10,6 +11,7 @@ __all__ = [
     "vinit",
     "VLogger",
     "TracePoint",
-    "MemTracePoint",
+    "MemRecorder",
+    "MetricRecorder",
     "CUPTI",
 ]

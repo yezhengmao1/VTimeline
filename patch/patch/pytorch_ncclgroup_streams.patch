@@ -1,0 +1,32 @@
+--- a/torch/csrc/distributed/c10d/init.cpp
++++ b/torch/csrc/distributed/c10d/init.cpp
+@@ -3037,7 +3037,9 @@
+           .def(
+               "get_error",
+               &::c10d::ProcessGroupNCCL::getError,
+-              py::call_guard<py::gil_scoped_release>());
++              py::call_guard<py::gil_scoped_release>())
++          .def_property_readonly(
++              "used_streams", &::c10d::ProcessGroupNCCL::getStreams, R"(Return the streams used by this process group.)");
+ 
+   module.def(
+       "_get_intra_node_comm_usage_counter",
+--- a/torch/csrc/distributed/c10d/ProcessGroupNCCL.hpp
++++ b/torch/csrc/distributed/c10d/ProcessGroupNCCL.hpp
+@@ -607,6 +607,16 @@
+     return std::string(NCCL_BACKEND_NAME);
+   }
+ 
++  const std::unordered_map<std::string, int64_t> getStreams() const {
++    std::unordered_map<std::string, int64_t> result;
++
++    for (const auto& pair : ncclStreams_) {
++        result[pair.first] = static_cast<int64_t>(pair.second.id());
++    }
++
++    return result;
++  }
++
+   bool supportsSplitting() const override {
+     return true;
+   }
