@@ -261,7 +261,6 @@ class CUPTI:
             print("Failed to enable CUDAVTimeline")
         tp.end()
         CUPTI.is_enable = True
-        CUPTI.enable_times -= 1
 
     @staticmethod
     def disable():
@@ -275,6 +274,16 @@ class CUPTI:
         CUPTI._lib.disable_vtimeline()
         tp.end()
         CUPTI.is_enable = False
+
+    @staticmethod
+    def step():
+        if CUPTI.enable_times > 0 and not CUPTI.is_enable:
+            CUPTI.enable()
+        elif CUPTI.enable_times <= 0 and CUPTI.is_enable:
+            CUPTI.disable()
+
+        if CUPTI.enable_times > 0:
+            CUPTI.enable_times -= 1
 
     @classmethod
     def _monitor_cupti_flag(cls):
@@ -310,7 +319,7 @@ class CUPTI:
             try:
                 enable_count = int(cupti_file.name[7:])
                 print(
-                    f" >>> [vtimeline] CUPTI can now be enabled {enable_count} times."
+                    f" >>> [vtimeline] CUPTI can now be enabled {enable_count} step."
                 )
                 CUPTI.enable_times = enable_count
                 last_check_time = cupti_file.stat().st_mtime

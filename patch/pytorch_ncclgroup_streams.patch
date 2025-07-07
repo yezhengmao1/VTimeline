@@ -13,12 +13,18 @@
        "_get_intra_node_comm_usage_counter",
 --- a/torch/csrc/distributed/c10d/ProcessGroupNCCL.hpp
 +++ b/torch/csrc/distributed/c10d/ProcessGroupNCCL.hpp
-@@ -607,6 +607,10 @@
+@@ -607,6 +607,16 @@
      return std::string(NCCL_BACKEND_NAME);
    }
  
-+  const std::unordered_map<std::string, at::cuda::CUDAStream> getStreams() const {
-+    return ncclStreams_;
++  const std::unordered_map<std::string, int64_t> getStreams() const {
++    std::unordered_map<std::string, int64_t> result;
++
++    for (const auto& pair : ncclStreams_) {
++        result[pair.first] = static_cast<int64_t>(pair.second.id());
++    }
++
++    return result;
 +  }
 +
    bool supportsSplitting() const override {
