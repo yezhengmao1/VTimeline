@@ -109,10 +109,25 @@ class TracePoint:
         self.logger = logging.getLogger("TracePoint")
         self.name = event_name
         self.cat = cat_name
+        self.gpu_stream = None
         if TRITON_AVAILABLE and TORCH_AVAILABLE:
-            self.gpu_stream = stream
-        else:
-            self.gpu_stream = None
+            if isinstance(stream, torch.cuda.Stream):
+                self.gpu_stream = stream
+            elif isinstance(stream, torch.distributed.ProcessGroup):
+                device_id = torch.cuda.current_device()
+                used_streams = stream._get_backend(torch.device(device_id)).used_streams
+                if str(device_id) not in used_streams:
+                    VLogger.info(
+                        "Cannot find the stream in device-{}".format(device_id)
+                    )
+                else:
+                    stream_id = used_streams[str(device_id)]
+                    self.gpu_stream = torch.cuda.stream(
+                        torch.cuda.Stream(
+                            device=torch.cuda.current_device(),
+                            stream_id=stream_id,
+                        )
+                    )
 
     def begin(self):
         if (
@@ -318,9 +333,7 @@ class CUPTI:
 
             try:
                 enable_count = int(cupti_file.name[7:])
-                print(
-                    f" >>> [vtimeline] CUPTI can now be enabled {enable_count} step."
-                )
+                print(f" >>> [vtimeline] CUPTI can now be enabled {enable_count} step.")
                 CUPTI.enable_times = enable_count
                 last_check_time = cupti_file.stat().st_mtime
 
