@@ -122,11 +122,10 @@ class TracePoint:
                     )
                 else:
                     stream_id = used_streams[str(device_id)]
-                    self.gpu_stream = torch.cuda.stream(
-                        torch.cuda.Stream(
-                            device=torch.cuda.current_device(),
-                            stream_id=stream_id,
-                        )
+                    self.gpu_stream = torch.cuda.Stream(
+                        stream_id=stream_id,
+                        device_index=device_id,
+                        device_type=1,  # DeviceType::CUDA
                     )
 
     def begin(self):
