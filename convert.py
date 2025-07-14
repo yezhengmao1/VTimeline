@@ -1,42 +1,36 @@
 #!/usr/bin/env python3
 
-import os
-import json
-import gzip
-import math
-import sys
 import argparse
-from typing import List, Dict, Any, Optional, Tuple
+import gzip
+import json
+import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from collections import defaultdict
+from typing import Any, Dict, List, Tuple
 
-parser = argparse.ArgumentParser(description="Convert log files to JSON format")
+import duckdb
+import pandas
 
-parser.add_argument(
-    "--input-file",
-    help="Input log file path (e.g., rank_0.log)",
-    type=str,
-    required=True,
-)
-parser.add_argument(
-    "--output-file",
-    help="Output JSON file path (e.g., trace.json)",
-    type=str,
-    required=True,
-)
-parser.add_argument(
-    "--min-time",
-    type=int,
-    default=0,
-    help="Minimum time threshold for filtering events",
-)
-parser.add_argument(
-    "--max-time",
-    type=int,
-    default=math.inf,
-    help="Maximum time threshold for filtering events",
-)
+
+def parse_range_list(value_list):
+    result = []
+    for item in value_list:
+        if "-" in item:
+            try:
+                start, end = item.split("-", 1)
+                start_num = int(start.strip())
+                end_num = int(end.strip())
+                result.extend(range(start_num, end_num + 1))
+            except ValueError:
+                raise argparse.ArgumentTypeError(f"Invalid range format: {item}")
+        else:
+            try:
+                result.append(int(item.strip()))
+            except ValueError:
+                raise argparse.ArgumentTypeError(f"Invalid number: {item}")
+
+    return sorted(list(set(result)))
 
 
 @dataclass
@@ -63,157 +57,177 @@ class TraceEvent:
         return (self.process_id, self.thread_id, self.category, self.name)
 
 
-@dataclass
-class MemoryDump:
-    timestamp: int
-    process_id: str
-    memory: int
+parser = argparse.ArgumentParser(
+    description="Convert the log files to duckdb for analyze"
+)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "ts": self.timestamp,
-            "name": "GPUMem",
-            "pid": self.process_id,
-            "ph": "C",
-            "args": {"Free": self.memory},
-        }
+parser.add_argument(
+    "--logdir",
+    help="Input log directory",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--db",
+    help="Output duckdb file",
+    type=str,
+    required=True,
+)
+parser.add_argument(
+    "--query",
+    help="Query the duckdb file",
+    action="store_true",
+)
+parser.add_argument(
+    "--rank",
+    help="List of worker ranks to analyze. Specify multiple ranks separated by spaces (e.g., --rank 0 1 2 3)",
+    type=str,
+    nargs="+",
+    default=["0"],
+)
+parser.add_argument(
+    "--cupti",
+    help="Query the cupti range",
+    action="store_true",
+)
+parser.add_argument(
+    "--query-step",
+    help="Query step in time range",
+    action="store_true",
+)
+parser.add_argument(
+    "--begin",
+    type=int,
+    default=0,
+    help="Start time threshold in microseconds for filtering trace events. Events before this time will be excluded (default: 0)",
+)
+parser.add_argument(
+    "--end",
+    type=int,
+    default=1852233025633355,
+    help="End time threshold in microseconds for filtering trace events. Events after this time will be excluded (default: no limit)",
+)
+parser.add_argument(
+    "--output",
+    help="Path to save the output JSON trace file (e.g., trace.json)",
+    type=str,
+    default=None,
+)
+
+args = parser.parse_args()
+
+args.rank = parse_range_list(args.rank)
 
 
-def parse_trace_line(line: str) -> Optional[TraceEvent]:
-    try:
-        parts = line.strip().split(",")
+def get_rank_file_from_dir(logdir: Path) -> Dict[str, Dict[str, List[str]]]:
+    result = {
+        "cupti": {},
+        "tracepoint": {},
+    }
 
-        if len(parts) == 6:
-            timestamp = int(parts[0])  # default is microsecond
-            if timestamp == 0:
-                return None
-            process_id = "rank" + str(int(parts[1]))
-            thread_id = "cpu"  # from cpu
-            if timestamp > 1e17:  # from device
-                timestamp = timestamp // 1000
-                thread_id = "stream" + str(int(parts[2]))
-            category = parts[3]
-            name = parts[4]
-            phase = parts[5]
+    for hostname in os.listdir(logdir):
+        if hostname not in result["cupti"]:
+            result["cupti"][hostname] = []
+            result["tracepoint"][hostname] = []
 
-            return TraceEvent(timestamp, process_id, thread_id, category, name, phase)
-        if len(parts) == 3:
-            timestamp = int(parts[0])  # default is microsecond
-            if timestamp == 0:
-                return None
-            process_id = "rank" + str(int(parts[1]))
-            memory = int(parts[2]) / 1024 / 1024
-            return MemoryDump(timestamp, process_id, memory)
-
-        return None
-    except (ValueError, IndexError):
-        print("parse error")
-        return None
-
-
-def filter_incomplete_events(events: List[TraceEvent]) -> List[TraceEvent]:
-    """Filter out events that have 'B' phase but no matching 'E' phase"""
-    # Group events by their identifier
-    begin_events = defaultdict(list)  # events with phase 'B'
-    end_events = defaultdict(list)  # events with phase 'E'
-    other_events = []  # events with other phases
-
-    for event in events:
-        if event.phase == "B":
-            identifier = event.get_identifier()
-            begin_events[identifier].append(event)
-        elif event.phase == "E":
-            identifier = event.get_identifier()
-            end_events[identifier].append(event)
-        else:
-            other_events.append(event)
-
-    filtered_events = []
-    incomplete_count = 0
-
-    # Process begin events and only keep those with matching end events
-    for identifier, b_events in begin_events.items():
-        e_events = end_events.get(identifier, [])
-
-        # Sort events by timestamp
-        b_events.sort(key=lambda x: x.timestamp)
-        e_events.sort(key=lambda x: x.timestamp)
-
-        # Match begin events with end events
-        matched_pairs = 0
-        min_count = min(len(b_events), len(e_events))
-
-        # Keep matched pairs
-        for i in range(min_count):
-            filtered_events.append(b_events[i])
-            filtered_events.append(e_events[i])
-            matched_pairs += 1
-
-        # Count incomplete events
-        incomplete_count += len(b_events) - matched_pairs
-
-        if len(b_events) != len(e_events):
-            print(
-                f"Warning: Event '{identifier[3]}' in {identifier[0]}/{identifier[1]} "
-                f"has {len(b_events)} 'B' events but {len(e_events)} 'E' events. "
-                f"Keeping {matched_pairs} matched pairs."
+        for rank_file in os.listdir(os.path.join(logdir, hostname, "CUPTI")):
+            cupti_rank_file = os.path.join(
+                logdir,
+                hostname,
+                "CUPTI",
+                rank_file,
             )
-
-    # Add unmatched end events (these are also incomplete)
-    for identifier, e_events in end_events.items():
-        if identifier not in begin_events:
-            incomplete_count += len(e_events)
-            print(
-                f"Warning: Found {len(e_events)} 'E' events for '{identifier[3]}' "
-                f"without matching 'B' events. Removing them."
+            result["cupti"][hostname].append(cupti_rank_file)
+        for rank_file in os.listdir(os.path.join(logdir, hostname, "TracePoint")):
+            tracepoint_rank_file = os.path.join(
+                logdir, hostname, "TracePoint", rank_file
             )
+            result["tracepoint"][hostname].append(tracepoint_rank_file)
 
-    # Add other events (non B/E events)
-    filtered_events.extend(other_events)
-
-    print(f"Filtered out {incomplete_count} incomplete trace events")
-    return filtered_events
+    return result
 
 
-def process_trace_data(
-    input_file: Path,
-    min_time: Optional[int] = None,
-    max_time: Optional[int] = None,
-) -> List[Dict[str, Any]]:
-    """Process trace data and convert to Chrome Trace format."""
-    trace_events = []
-    memory_events = []
+def create_duckdb_table():
+    if os.path.exists(f"{args.db}.duckdb"):
+        raise FileExistsError(f"{args.db}.duckdb already exists")
 
-    with open(input_file, "r") as f:
-        for line_num, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
+    conn = duckdb.connect(f"{args.db}.duckdb")
+    conn.execute("""
+    CREATE TABLE tracepoint (
+        timestamp BIGINT,
+        hostname TEXT,
+        rank INTEGER,
+        stream INTEGER,
+        op_type VARCHAR,
+        op_name VARCHAR,
+        op_phase VARCHAR,
+    )""")
+    conn.execute("CREATE INDEX idx_timestamp ON tracepoint (timestamp)")
+    conn.execute("CREATE INDEX idx_rank ON tracepoint (rank)")
+    conn.execute("CREATE INDEX idx_stream ON tracepoint (stream)")
+    conn.execute("CREATE INDEX idx_op_type ON tracepoint (op_type)")
 
-            event = parse_trace_line(line)
-            if not event:
-                print(f"Warning: Failed to parse line {line_num}: {line}")
-                continue
+    return conn
 
-            if min_time is not None and event.timestamp < min_time:
-                continue
-            if max_time is not None and event.timestamp > max_time:
-                continue
 
-            if isinstance(event, TraceEvent):
-                trace_events.append(event)
-            elif isinstance(event, MemoryDump):
-                memory_events.append(event)
+def read_tracepoint_from_file(hostname: str, log_file: str, tsunit: str):
+    print(f"Writing {log_file} ...")
+    with open(log_file, "r") as f:
+        raw_data = pandas.read_csv(
+            f,
+            header=None,
+            names=["timestamp", "rank", "stream", "op_type", "op_name", "op_phase"],
+        )
+        raw_data.insert(1, "hostname", hostname)
+        if tsunit == "ns":
+            # convert to us
+            raw_data["timestamp"] = raw_data["timestamp"] / 1000
+    return raw_data
 
-    # Filter incomplete events if requested
-    trace_events = filter_incomplete_events(trace_events)
 
-    # Convert all events to dict
-    all_events = []
-    all_events.extend([event.to_dict() for event in trace_events])
-    all_events.extend([event.to_dict() for event in memory_events])
+def convert_tracepoint_to_duckdb():
+    log_files = get_rank_file_from_dir(args.logdir)
+    conn = create_duckdb_table()
 
-    return all_events
+    raw_datas = []
+    for hostname, rank_files in log_files["tracepoint"].items():
+        for rank_file in rank_files:
+            raw_datas.append(read_tracepoint_from_file(hostname, rank_file, "us"))
+
+    for hostname, rank_files in log_files["cupti"].items():
+        for rank_file in rank_files:
+            raw_datas.append(read_tracepoint_from_file(hostname, rank_file, "ns"))
+
+    raw_data = pandas.concat(raw_datas)
+    conn.register("raw_data", raw_data)
+    conn.execute("INSERT INTO tracepoint SELECT * FROM raw_data")
+    conn.unregister("raw_data")
+
+    conn.close()
+
+
+def query_cupti_from_duckdb(conn: duckdb.DuckDBPyConnection):
+    conn.execute(
+        "SELECT * FROM tracepoint WHERE rank=0 and op_type='CUPTI' and (op_name='cupti-enable' or op_name='cupti-disable')"
+    )
+    for record in conn.fetchall():
+        print(
+            f"{record[5]}-{record[6]} {record[0]} <> {datetime.fromtimestamp(record[0] / 1000000).strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+
+def query_step_from_duckdb(conn: duckdb.DuckDBPyConnection):
+    conn.execute(
+        "SELECT * FROM tracepoint WHERE rank=0 and timestamp >= {} and timestamp <= {} and op_type='Train'".format(
+            args.begin, args.end
+        )
+    )
+    for record in conn.fetchall():
+        if "train-step-it" not in record[5]:
+            continue
+        print(
+            f"{record[5]}-{record[6]} {record[0]} <> {datetime.fromtimestamp(record[0] / 1000000).strftime('%Y-%m-%d %H:%M:%S')}"
+        )
 
 
 def generate_chrome_trace_json(events: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -227,58 +241,64 @@ def generate_chrome_trace_json(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def main():
-    args = parser.parse_args()
+def generate_chrome_trace_from_duckdb(conn: duckdb.DuckDBPyConnection):
+    rank_filter_str = ",".join(map(str, args.rank))
+    conn.execute(
+        "SELECT * FROM tracepoint WHERE rank in ({}) and timestamp >= {} and timestamp <= {}".format(
+            rank_filter_str,
+            args.begin,
+            args.end,
+        )
+    )
 
-    input_path = args.input_file
-    output_file = args.output_file
-    min_time = args.min_time
-    max_time = args.max_time
+    all_events = []
 
-    try:
-        all_events = []
+    for record in conn.fetchall():
+        trace_event = TraceEvent(
+            timestamp=record[0],
+            process_id="rank_" + str(record[2]),
+            thread_id="cpu" if record[3] == 0 else "stream_" + str(record[3]),
+            category=record[4],
+            name=record[5],
+            phase=record[6],
+        )
 
-        if os.path.isdir(input_path):
-            for root, dirs, files in os.walk(input_path):
-                # .*TracePoint
-                if "CUPTI" in root or "TracePoint" in root:
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        print(f" >> process file {root}/{file}")
-                        all_events.extend(
-                            process_trace_data(
-                                file_path, min_time=min_time, max_time=max_time
-                            )
-                        )
-        else:
-            print(f" >> process file {input_path}")
-            all_events.extend(
-                process_trace_data(
-                    input_path,
-                    min_time=min_time,
-                    max_time=max_time,
-                )
-            )
+        all_events.append(trace_event.to_dict())
 
-        # Generate Chrome Trace JSON
-        trace_json = generate_chrome_trace_json(all_events)
+    return generate_chrome_trace_json(all_events)
 
-        # Write to output file
+
+def query_duckdb():
+    conn = duckdb.connect(f"{args.db}.duckdb")
+
+    if args.cupti:
+        query_cupti_from_duckdb(conn)
+    elif args.query_step:
+        query_step_from_duckdb(conn)
+    elif args.output:
+        trace_json = generate_chrome_trace_from_duckdb(conn)
+        output_file = args.output
         if not output_file.endswith(".gz"):
             output_file += ".gz"
-        print(f"\nWriting Chrome Trace JSON to {output_file}...")
+
+        print(f"Writing Chrome Trace JSON to {output_file}...")
         with gzip.open(output_file, "wt", encoding="utf-8") as f:
             json.dump(trace_json, f, separators=(",", ":"))
 
-        print("Successfully converted trace data!")
-        print(f"Open {output_file} in Chrome at chrome://tracing/ to visualize.")
+        print(f"Open {output_file} in Chrome at https://ui.perfetto.dev/ to visualize.")
+    else:
+        print("No query specified")
+        parser.print_help()
+        parser.print_usage()
 
-    except FileNotFoundError:
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error processing trace data: {e}")
-        sys.exit(1)
+    conn.close()
 
 
 if __name__ == "__main__":
-    main()
+    if args.logdir:
+        convert_tracepoint_to_duckdb()
+    elif args.query:
+        query_duckdb()
+    else:
+        parser.print_help()
+        parser.print_usage()
