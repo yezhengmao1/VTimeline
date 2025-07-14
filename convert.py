@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 import duckdb
 import pandas
@@ -31,6 +31,17 @@ def parse_range_list(value_list):
                 raise argparse.ArgumentTypeError(f"Invalid number: {item}")
 
     return sorted(list(set(result)))
+
+
+def generate_id_map(id_map_str: str) -> Optional[Dict[str, str]]:
+    if args.id_map is None:
+        return None
+
+    id_map = {}
+    for id_map_str in args.id_map.split(" "):
+        id, name = id_map_str.split("=")
+        id_map[id] = name
+    return id_map
 
 
 @dataclass
@@ -113,10 +124,17 @@ parser.add_argument(
     type=str,
     default=None,
 )
+parser.add_argument(
+    "--id-map",
+    help="map the marker id to string, like --id-map 1000000000000000=train-step-it 1000000000000001=train-step-it-end",
+    type=str,
+    default=None,
+)
 
 args = parser.parse_args()
 
 args.rank = parse_range_list(args.rank)
+args.id_map = generate_id_map(args.id_map)
 
 
 def get_rank_file_from_dir(logdir: Path) -> Dict[str, Dict[str, List[str]]]:
@@ -254,12 +272,34 @@ def generate_chrome_trace_from_duckdb(conn: duckdb.DuckDBPyConnection):
     all_events = []
 
     for record in conn.fetchall():
+        event_name = record[5]
+        if args.id_map and "vtimeline_marker" in record[5]:
+            if record[5].split("_")[-1] in args.id_map:
+                event_name = (
+                    "_".join(record[5].split("_")[:-1])
+                    + "_"
+                    + args.id_map[record[5].split("_")[-1]]
+                )
+
+        if "vtimeline_marker_begin" in event_name and record[6] == "E":
+            continue
+        if "vtimeline_marker_end" in event_name and record[6] == "B":
+            continue
+        # like vtimeline_marker_begin_eventname and vtimeline_marker_end_eventname
+        # remove the begin and end in the event name
+        if (
+            "vtimeline_marker_begin" in event_name
+            or "vtimeline_marker_end" in event_name
+        ):
+            event_name = event_name.split("_")
+            event_name = "_".join(event_name[0:2]) + "_" + "_".join(event_name[3:])
+
         trace_event = TraceEvent(
             timestamp=record[0],
             process_id="rank_" + str(record[2]),
             thread_id="cpu" if record[3] == 0 else "stream_" + str(record[3]),
             category=record[4],
-            name=record[5],
+            name=event_name,
             phase=record[6],
         )
 

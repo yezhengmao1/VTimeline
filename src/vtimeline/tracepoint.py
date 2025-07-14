@@ -164,7 +164,7 @@ class TracePoint:
             and CUPTI.is_enable
         ):
             if self.name not in G_TP_NAME_TO_KERNEL_IDX:
-                VLogger.warn(f"TracePoint {self.name} without BEGIN!!!")
+                VLogger.warning(f"TracePoint {self.name} without BEGIN!!!")
                 return
 
             kernel_func = END_KERNEL_FUNCS[G_TP_NAME_TO_KERNEL_IDX[self.name]]
