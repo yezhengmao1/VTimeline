@@ -105,28 +105,36 @@ class MetricFormatter(logging.Formatter):
 
 
 class TracePoint:
-    def __init__(self, event_name: str, cat_name: str, stream=None):
+    def __init__(
+        self,
+        event_name: str,
+        cat_name: str,
+        stream=None,
+        level="DEBUG",
+    ):
         self.logger = logging.getLogger("TracePoint")
         self.name = event_name
         self.cat = cat_name
         self.gpu_stream = None
-        if TRITON_AVAILABLE and TORCH_AVAILABLE:
-            if isinstance(stream, torch.cuda.Stream):
-                self.gpu_stream = stream
-            elif isinstance(stream, torch.distributed.ProcessGroup):
-                device_id = torch.cuda.current_device()
-                used_streams = stream._get_backend(torch.device(device_id)).used_streams
-                if str(device_id) not in used_streams:
-                    VLogger.info(
-                        "Cannot find the stream in device-{}".format(device_id)
-                    )
-                else:
-                    stream_id = used_streams[str(device_id)]
-                    self.gpu_stream = torch.cuda.Stream(
-                        stream_id=stream_id,
-                        device_index=device_id,
-                        device_type=1,  # DeviceType::CUDA
-                    )
+        self.level = logging.getLevelNamesMapping()[level]
+
+        if not TRITON_AVAILABLE or not TORCH_AVAILABLE:
+            return
+
+        if isinstance(stream, torch.cuda.Stream):
+            self.gpu_stream = stream
+        elif isinstance(stream, torch.distributed.ProcessGroup):
+            device_id = torch.cuda.current_device()
+            used_streams = stream._get_backend(torch.device(device_id)).used_streams
+            if str(device_id) not in used_streams:
+                VLogger.info("Cannot find the stream in device-{}".format(device_id))
+            else:
+                stream_id = used_streams[str(device_id)]
+                self.gpu_stream = torch.cuda.Stream(
+                    stream_id=stream_id,
+                    device_index=device_id,
+                    device_type=1,  # DeviceType::CUDA
+                )
 
     def begin(self):
         if (
@@ -165,7 +173,8 @@ class TracePoint:
         self.record(self.name, self.cat, "E")
 
     def record(self, event_name: str, cat_name: str, ph: str):
-        self.logger.info(
+        self.logger.log(
+            self.level,
             event_name,
             extra={
                 "cat": cat_name,
@@ -210,7 +219,7 @@ class MetricRecorder:
     @staticmethod
     def record(logger_name: str, value: str):
         if logger_name not in MetricRecorder._logger_map:
-            VLogger.warn("No MetricRecorder : {}".format(logger_name))
+            VLogger.warning("No MetricRecorder : {}".format(logger_name))
             return
         logger = MetricRecorder._logger_map[logger_name]
         logger.info(f"{value}")
@@ -267,7 +276,7 @@ class CUPTI:
         if CUPTI.enable_times <= 0 or CUPTI.is_enable:
             return
 
-        tp = TracePoint("cupti-enable", "CUPTI")
+        tp = TracePoint("cupti-enable", "CUPTI", level="INFO")
         tp.begin()
         if CUPTI._lib is None:
             return
@@ -281,7 +290,7 @@ class CUPTI:
         if not CUPTI.is_enable:
             return
 
-        tp = TracePoint("cupti-disable", "CUPTI")
+        tp = TracePoint("cupti-disable", "CUPTI", level="INFO")
         tp.begin()
         if CUPTI._lib is None:
             return
@@ -307,7 +316,7 @@ class CUPTI:
         print(" >>> [vtimeline] CUPTI monitor thread started.")
 
         while True:
-            time.sleep(5)
+            time.sleep(1)
 
             if (
                 not cupti_flag_dir.exists()
@@ -368,13 +377,15 @@ def __create_async_rotating_file_handler(
     return queue_handler
 
 
-def __create_logger(log_root_dir: str, logger_name: str, formatter: logging.Formatter):
+def __create_logger(
+    log_root_dir: str, logger_name: str, formatter: logging.Formatter, level: str
+):
     log_dir = Path(log_root_dir) / logger_name
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # set logger
     logger = logging.getLogger(logger_name)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(level)
     logger.addHandler(
         __create_async_rotating_file_handler(
             log_dir / f"rank_{os.getenv('RANK', -1)}.log",
@@ -387,18 +398,20 @@ def __create_logger(log_root_dir: str, logger_name: str, formatter: logging.Form
 _vinit_initialized = False
 
 
-def tracepoint_module_setup(metrics: List[str] = None):
+def tracepoint_module_setup(metrics: List[str] = ["GPUMem", "MFU"]):
     log_dir = os.getenv("VTIMELINE_LOGGER_DIR", "/var/log")
+    tp_level = os.getenv("VTIMELINE_TRACEPOINT_LEVEL", "INFO")
+
     metric_dir = log_dir + "/Metrics"
 
     default_formatter = logging.Formatter(
         fmt="[%(levelname)s][%(process)d][%(name)s][%(asctime)s] %(message)s"
     )
 
-    __create_logger(log_dir, "VLog", default_formatter)
-    __create_logger(log_dir, "TracePoint", TracePointFormatter())
+    __create_logger(log_dir, "VLog", default_formatter, "INFO")
+    __create_logger(log_dir, "TracePoint", TracePointFormatter(), tp_level)
     for metric in metrics:
-        __create_logger(metric_dir, metric, MetricFormatter())
+        __create_logger(metric_dir, metric, MetricFormatter(), tp_level)
 
 
 def vinit(metrics: List[str] = ["GPUMem", "MFU"]):
