@@ -31,3 +31,25 @@ END_KERNEL_FUNCS[$i] = vtimeline_marker_end_$i
 
 EOF
 done
+
+for i in "AttnFwd" "Router" "Dispatch" "Experts" "Combine" "OutputLayer" "ParamSync" "GradSync" "ComputeLoss" "AGLoss"; do
+    cat <<EOF
+@triton.jit()
+def vtimeline_marker_begin_$i():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_$i():
+    pass
+
+
+vtimeline_marker_begin_$i[(1,)]()
+vtimeline_marker_end_$i[(1,)]()
+
+BEGIN_KERNEL_FUNCS["$i"] = vtimeline_marker_begin_$i
+END_KERNEL_FUNCS["$i"] = vtimeline_marker_end_$i
+
+
+EOF
+done

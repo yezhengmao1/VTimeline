@@ -343,3 +343,173 @@ vtimeline_marker_end_19[(1,)]()
 
 BEGIN_KERNEL_FUNCS[19] = vtimeline_marker_begin_19
 END_KERNEL_FUNCS[19] = vtimeline_marker_end_19
+
+
+@triton.jit()
+def vtimeline_marker_begin_AttnFwd():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_AttnFwd():
+    pass
+
+
+vtimeline_marker_begin_AttnFwd[(1,)]()
+vtimeline_marker_end_AttnFwd[(1,)]()
+
+BEGIN_KERNEL_FUNCS["AttnFwd"] = vtimeline_marker_begin_AttnFwd
+END_KERNEL_FUNCS["AttnFwd"] = vtimeline_marker_end_AttnFwd
+
+
+@triton.jit()
+def vtimeline_marker_begin_Router():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_Router():
+    pass
+
+
+vtimeline_marker_begin_Router[(1,)]()
+vtimeline_marker_end_Router[(1,)]()
+
+BEGIN_KERNEL_FUNCS["Router"] = vtimeline_marker_begin_Router
+END_KERNEL_FUNCS["Router"] = vtimeline_marker_end_Router
+
+
+@triton.jit()
+def vtimeline_marker_begin_Dispatch():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_Dispatch():
+    pass
+
+
+vtimeline_marker_begin_Dispatch[(1,)]()
+vtimeline_marker_end_Dispatch[(1,)]()
+
+BEGIN_KERNEL_FUNCS["Dispatch"] = vtimeline_marker_begin_Dispatch
+END_KERNEL_FUNCS["Dispatch"] = vtimeline_marker_end_Dispatch
+
+
+@triton.jit()
+def vtimeline_marker_begin_Experts():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_Experts():
+    pass
+
+
+vtimeline_marker_begin_Experts[(1,)]()
+vtimeline_marker_end_Experts[(1,)]()
+
+BEGIN_KERNEL_FUNCS["Experts"] = vtimeline_marker_begin_Experts
+END_KERNEL_FUNCS["Experts"] = vtimeline_marker_end_Experts
+
+
+@triton.jit()
+def vtimeline_marker_begin_Combine():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_Combine():
+    pass
+
+
+vtimeline_marker_begin_Combine[(1,)]()
+vtimeline_marker_end_Combine[(1,)]()
+
+BEGIN_KERNEL_FUNCS["Combine"] = vtimeline_marker_begin_Combine
+END_KERNEL_FUNCS["Combine"] = vtimeline_marker_end_Combine
+
+
+@triton.jit()
+def vtimeline_marker_begin_OutputLayer():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_OutputLayer():
+    pass
+
+
+vtimeline_marker_begin_OutputLayer[(1,)]()
+vtimeline_marker_end_OutputLayer[(1,)]()
+
+BEGIN_KERNEL_FUNCS["OutputLayer"] = vtimeline_marker_begin_OutputLayer
+END_KERNEL_FUNCS["OutputLayer"] = vtimeline_marker_end_OutputLayer
+
+
+@triton.jit()
+def vtimeline_marker_begin_ParamSync():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_ParamSync():
+    pass
+
+
+vtimeline_marker_begin_ParamSync[(1,)]()
+vtimeline_marker_end_ParamSync[(1,)]()
+
+BEGIN_KERNEL_FUNCS["ParamSync"] = vtimeline_marker_begin_ParamSync
+END_KERNEL_FUNCS["ParamSync"] = vtimeline_marker_end_ParamSync
+
+
+@triton.jit()
+def vtimeline_marker_begin_GradSync():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_GradSync():
+    pass
+
+
+vtimeline_marker_begin_GradSync[(1,)]()
+vtimeline_marker_end_GradSync[(1,)]()
+
+BEGIN_KERNEL_FUNCS["GradSync"] = vtimeline_marker_begin_GradSync
+END_KERNEL_FUNCS["GradSync"] = vtimeline_marker_end_GradSync
+
+
+@triton.jit()
+def vtimeline_marker_begin_ComputeLoss():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_ComputeLoss():
+    pass
+
+
+vtimeline_marker_begin_ComputeLoss[(1,)]()
+vtimeline_marker_end_ComputeLoss[(1,)]()
+
+BEGIN_KERNEL_FUNCS["ComputeLoss"] = vtimeline_marker_begin_ComputeLoss
+END_KERNEL_FUNCS["ComputeLoss"] = vtimeline_marker_end_ComputeLoss
+
+
+@triton.jit()
+def vtimeline_marker_begin_AGLoss():
+    pass
+
+
+@triton.jit()
+def vtimeline_marker_end_AGLoss():
+    pass
+
+
+vtimeline_marker_begin_AGLoss[(1,)]()
+vtimeline_marker_end_AGLoss[(1,)]()
+
+BEGIN_KERNEL_FUNCS["AGLoss"] = vtimeline_marker_begin_AGLoss
+END_KERNEL_FUNCS["AGLoss"] = vtimeline_marker_end_AGLoss

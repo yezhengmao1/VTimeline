@@ -143,15 +143,18 @@ class TracePoint:
             and TORCH_AVAILABLE
             and CUPTI.is_enable
         ):
-            if self.name not in G_TP_NAME_TO_KERNEL_IDX:
-                if len(G_TP_NAME_TO_KERNEL_IDX) >= TOTAL_MARKER_NUM:
-                    idx = 0
-                else:
-                    idx = len(G_TP_NAME_TO_KERNEL_IDX)
-                G_TP_NAME_TO_KERNEL_IDX[self.name] = idx
-                VLogger.info(f"TracePoint {self.name} marker id {idx}")
+            if self.name in BEGIN_KERNEL_FUNCS:
+                kernel_func = BEGIN_KERNEL_FUNCS[self.name]
+            else:
+                if self.name not in G_TP_NAME_TO_KERNEL_IDX:
+                    if len(G_TP_NAME_TO_KERNEL_IDX) >= TOTAL_MARKER_NUM:
+                        idx = 0
+                    else:
+                        idx = len(G_TP_NAME_TO_KERNEL_IDX)
+                    G_TP_NAME_TO_KERNEL_IDX[self.name] = idx
+                    VLogger.info(f"TracePoint {self.name} marker id {idx}")
+                kernel_func = BEGIN_KERNEL_FUNCS[G_TP_NAME_TO_KERNEL_IDX[self.name]]
 
-            kernel_func = BEGIN_KERNEL_FUNCS[G_TP_NAME_TO_KERNEL_IDX[self.name]]
             with torch.cuda.stream(self.gpu_stream):
                 kernel_func[(1,)]()
         self.record(self.name, self.cat, "B")
@@ -163,11 +166,14 @@ class TracePoint:
             and TORCH_AVAILABLE
             and CUPTI.is_enable
         ):
-            if self.name not in G_TP_NAME_TO_KERNEL_IDX:
-                VLogger.warning(f"TracePoint {self.name} without BEGIN!!!")
-                return
+            if self.name in END_KERNEL_FUNCS:
+                kernel_func = END_KERNEL_FUNCS[self.name]
+            else:
+                if self.name not in G_TP_NAME_TO_KERNEL_IDX:
+                    VLogger.warning(f"TracePoint {self.name} without BEGIN!!!")
+                    return
+                kernel_func = END_KERNEL_FUNCS[G_TP_NAME_TO_KERNEL_IDX[self.name]]
 
-            kernel_func = END_KERNEL_FUNCS[G_TP_NAME_TO_KERNEL_IDX[self.name]]
             with torch.cuda.stream(self.gpu_stream):
                 kernel_func[(1,)]()
         self.record(self.name, self.cat, "E")
