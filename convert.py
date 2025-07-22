@@ -144,6 +144,9 @@ def get_rank_file_from_dir(logdir: Path) -> Dict[str, Dict[str, List[str]]]:
     }
 
     for hostname in os.listdir(logdir):
+        if not os.path.isdir(os.path.join(logdir, hostname)):
+            continue
+
         if hostname not in result["cupti"]:
             result["cupti"][hostname] = []
             result["tracepoint"][hostname] = []

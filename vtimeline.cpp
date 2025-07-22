@@ -137,7 +137,8 @@ void CUPTIAPI processBuffer(CUcontext context [[maybe_unused]],
 
 void consume_record_from_buffer(CUpti_Activity *record) {
     switch (record->kind) {
-    case CUPTI_ACTIVITY_KIND_KERNEL: {
+    case CUPTI_ACTIVITY_KIND_KERNEL:
+    case CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL: {
         CUpti_ActivityKernel9 *activity =
             reinterpret_cast<CUpti_ActivityKernel9 *>(record);
         uint64_t start_ts = activity->start;
@@ -331,8 +332,8 @@ bool init_cupti_env() {
 
 void enable_cupti_activity() {
     std::array activity_kinds = {
-        CUPTI_ACTIVITY_KIND_KERNEL,
-        // CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL,
+        // CUPTI_ACTIVITY_KIND_KERNEL,
+        CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL,
         CUPTI_ACTIVITY_KIND_MEMCPY,
         CUPTI_ACTIVITY_KIND_MEMCPY2,
     };

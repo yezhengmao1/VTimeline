@@ -1,13 +1,13 @@
-import os
-import time
-import queue
 import atexit
 import ctypes
 import logging
-import threading
-from pathlib import Path
-from typing import List, Dict
 import logging.handlers
+import os
+import queue
+import threading
+import time
+from pathlib import Path
+from typing import Dict, List
 
 ################################
 ### Tracepoint for vtimeline ###
@@ -33,6 +33,13 @@ try:
     G_TP_NAME_TO_KERNEL_IDX = {}
 except ImportError:
     TRITON_AVAILABLE = False
+
+VTIMELINE_MARKER_KERNEL = os.getenv("VTIMELINE_MARKER_KERNEL", "OFF").lower() in (
+    "1",
+    "on",
+    "yes",
+    "true",
+)
 
 
 class VTimeLineLogger(logging.Logger):
@@ -118,7 +125,7 @@ class TracePoint:
         self.gpu_stream = None
         self.level = logging.getLevelNamesMapping()[level]
 
-        if not TRITON_AVAILABLE or not TORCH_AVAILABLE:
+        if not TRITON_AVAILABLE or not TORCH_AVAILABLE or not VTIMELINE_MARKER_KERNEL:
             return
 
         if isinstance(stream, torch.cuda.Stream):
@@ -138,7 +145,8 @@ class TracePoint:
 
     def begin(self):
         if (
-            self.gpu_stream is not None
+            VTIMELINE_MARKER_KERNEL
+            and self.gpu_stream is not None
             and TRITON_AVAILABLE
             and TORCH_AVAILABLE
             and CUPTI.is_enable
@@ -161,7 +169,8 @@ class TracePoint:
 
     def end(self):
         if (
-            self.gpu_stream is not None
+            VTIMELINE_MARKER_KERNEL
+            and self.gpu_stream is not None
             and TRITON_AVAILABLE
             and TORCH_AVAILABLE
             and CUPTI.is_enable
