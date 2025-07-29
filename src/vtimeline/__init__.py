@@ -7,6 +7,8 @@ from .tracepoint import (
     CUPTI,
 )
 
+from .megatron_collector import MegatronCollector
+
 __all__ = [
     "vinit",
     "VLogger",
@@ -14,4 +16,5 @@ __all__ = [
     "MemRecorder",
     "MetricRecorder",
     "CUPTI",
+    "MegatronCollector",
 ]
