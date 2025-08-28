@@ -76,6 +76,8 @@ class MegatronCollector:
         param_info = {
             "name": param_name,
             "cksum": _get_cksum(param.main_grad),
+            "mean": float(param.main_grad.mean().item()),
+            "std": float(param.main_grad.std().item()),
             "shape": list(param.main_grad.shape),
             "type": str(param.main_grad.type()),
         }
@@ -103,6 +105,12 @@ class MegatronCollector:
                 param_info = {
                     "name": name,
                     "cksum": _get_cksum(param.main_param) if main_param_exist else None,
+                    "mean": float(param.main_param.mean().item())
+                    if main_param_exist
+                    else None,
+                    "std": float(param.main_param.std().item())
+                    if main_param_exist
+                    else None,
                     "shape": list(param.main_param.shape) if main_param_exist else None,
                     "type": str(param.main_param.type())
                     if hasattr(param, "main_param") and param.main_param is not None
@@ -127,6 +135,8 @@ class MegatronCollector:
                 param_info = {
                     "name": name,
                     "cksum": _get_cksum(param),
+                    "mean": float(param.mean().item()),
+                    "std": float(param.std().item()),
                     "shape": list(param.shape),
                     "type": str(param.type()),
                     "requires_grad": param.requires_grad,
