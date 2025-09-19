@@ -6,3 +6,5 @@ __pycache__/
 *$py.class
 *.egg-info/
 *.egg
+.venv
+libs.*
