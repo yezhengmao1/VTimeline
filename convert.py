@@ -144,6 +144,7 @@ def get_rank_file_from_dir(logdir: Path) -> Dict[str, Dict[str, List[str]]]:
     }
 
     for hostname in os.listdir(logdir):
+        print("Hostname", hostname)
         if not os.path.isdir(os.path.join(logdir, hostname)):
             continue
 
@@ -167,6 +168,40 @@ def get_rank_file_from_dir(logdir: Path) -> Dict[str, Dict[str, List[str]]]:
 
     return result
 
+def get_specific_rank_files_from_dir(ranks: List[int], logdir: Path) -> Dict[str, Dict[str, List[str]]]:
+    result = {
+        "cupti": {},
+        "tracepoint": {},
+    }
+
+    target_rank_log_files = [f"rank_{rank}.log" for rank in ranks]
+
+    for hostname in os.listdir(logdir):
+        if not os.path.isdir(os.path.join(logdir, hostname)):
+            continue
+
+        if hostname not in result["cupti"]:
+            result["cupti"][hostname] = []
+            result["tracepoint"][hostname] = []
+
+        cupit_path = os.path.join(logdir, hostname, "CUPTI")
+        tracepoint_path = os.path.join(logdir, hostname, "TracePoint")
+
+        for rank_file in os.listdir(cupit_path):
+            if (rank_file in target_rank_log_files):
+                cupti_rank_file = os.path.join(
+                    cupit_path, rank_file,
+                )
+                result["cupti"][hostname].append(cupti_rank_file)
+
+        for rank_file in os.listdir(tracepoint_path):
+            if (rank_file in target_rank_log_files):
+                tracepoint_rank_file = os.path.join(
+                    tracepoint_path, rank_file
+                )
+                result["tracepoint"][hostname].append(tracepoint_rank_file)
+
+    return result
 
 def create_duckdb_table():
     if os.path.exists(f"{args.db}.duckdb"):
@@ -207,30 +242,47 @@ def read_tracepoint_from_file(hostname: str, log_file: str, tsunit: str):
 
 
 def convert_tracepoint_to_duckdb():
-    log_files = get_rank_file_from_dir(args.logdir)
+    log_files = {}
+    
+    query_all_rank_logs = (len(args.rank) == 1) and (args.rank[0] == 0)
+    if (query_all_rank_logs):
+        log_files = get_specific_rank_files_from_dir(args.rank, args.logdir)
+    else:
+        log_files = get_rank_file_from_dir(args.logdir)
+
     conn = create_duckdb_table()
 
-    raw_datas = []
     for hostname, rank_files in log_files["tracepoint"].items():
         for rank_file in rank_files:
-            raw_datas.append(read_tracepoint_from_file(hostname, rank_file, "us"))
+            tracepoint_csv = read_tracepoint_from_file(hostname, rank_file, "us")
+            conn.register("tracepoint_csv", tracepoint_csv)
+            conn.execute("INSERT INTO tracepoint SELECT * FROM tracepoint_csv")
+            conn.unregister("temp_csv_data")
 
     for hostname, rank_files in log_files["cupti"].items():
         for rank_file in rank_files:
-            raw_datas.append(read_tracepoint_from_file(hostname, rank_file, "ns"))
-
-    raw_data = pandas.concat(raw_datas)
-    conn.register("raw_data", raw_data)
-    conn.execute("INSERT INTO tracepoint SELECT * FROM raw_data")
-    conn.unregister("raw_data")
+            cupti_csv = read_tracepoint_from_file(hostname, rank_file, "ns")
+            conn.register("cupti_csv_data", cupti_csv)
+            conn.execute("INSERT INTO tracepoint SELECT * FROM cupti_csv_data")
+            conn.unregister("cupti_csv_data")
 
     conn.close()
 
-
 def query_cupti_from_duckdb(conn: duckdb.DuckDBPyConnection):
+    
+    #conn.execute(
+    #    "SELECT * FROM tracepoint WHERE rank=0 and op_type='CUPTI' and (op_name='cupti-enable' or op_name='cupti-disable')"
+    #)
+    
+    rank_filter_str = ",".join(map(str, args.rank))
     conn.execute(
-        "SELECT * FROM tracepoint WHERE rank=0 and op_type='CUPTI' and (op_name='cupti-enable' or op_name='cupti-disable')"
+        "SELECT * FROM tracepoint WHERE rank in ({}) and timestamp >= {} and timestamp <= {}".format(
+            rank_filter_str,
+            args.begin,
+            args.end,
+        )
     )
+
     for record in conn.fetchall():
         print(
             f"{record[5]}-{record[6]} {record[0]} <> {datetime.fromtimestamp(record[0] / 1000000).strftime('%Y-%m-%d %H:%M:%S')}"
@@ -238,11 +290,20 @@ def query_cupti_from_duckdb(conn: duckdb.DuckDBPyConnection):
 
 
 def query_step_from_duckdb(conn: duckdb.DuckDBPyConnection):
+    #conn.execute(
+    #    "SELECT * FROM tracepoint WHERE rank=0 and timestamp >= {} and timestamp <= {} and op_type='Train'".format(
+    #        args.begin, args.end
+    #    )
+    #)
+    rank_filter_str = ",".join(map(str, args.rank))
     conn.execute(
-        "SELECT * FROM tracepoint WHERE rank=0 and timestamp >= {} and timestamp <= {} and op_type='Train'".format(
-            args.begin, args.end
+        "SELECT * FROM tracepoint WHERE rank in ({}) and timestamp >= {} and timestamp <= {} and op_type='Train'".format(
+            rank_filter_str,
+            args.begin,
+            args.end,
         )
     )
+
     for record in conn.fetchall():
         if "train-step-it" not in record[5]:
             continue
