@@ -63,6 +63,21 @@ class TraceEvent:
         """Return a unique identifier for matching B and E events"""
         return (self.process_id, self.thread_id, self.category, self.name)
 
+from enum import IntEnum
+class TsUnit(IntEnum):
+    NS = 1000
+    MS = 1 
+
+class ProfileCategory(IntEnum):
+    CUPTI = 1
+    TRACEPOINT = 2
+
+@dataclass
+class ProfileLogFile:
+    ts_unit: TsUnit
+    category: ProfileCategory
+    path:     str
+
 
 parser = argparse.ArgumentParser(
     description="Convert the log files to chrome trace json"
@@ -81,6 +96,7 @@ parser.add_argument(
     nargs="+",
     default=["0"],
 )
+"""
 parser.add_argument(
     "--cupti",
     help="Query the cupti range",
@@ -91,6 +107,7 @@ parser.add_argument(
     help="Query step in time range",
     action="store_true",
 )
+"""
 parser.add_argument(
     "--begin",
     type=int,
@@ -121,37 +138,117 @@ args = parser.parse_args()
 args.rank = parse_range_list(args.rank)
 args.id_map = generate_id_map(args.id_map)
 
+# -------------------------------------------------------------------------
+# Parse rank id from a filename. 
+# 
+# Return rank id parsed from the filename, and
+# the status of parsing.
+# -------------------------------------------------------------------------
+def _parse_rank_filename(filename : str):
+    rank, success = -1, False
+    
+    if not filename.endswith('.log'):
+        return rank, success
+    
+    # Remove .log suffix.
+    filename = filename[:-4]
 
-def get_rank_file_from_dir(logdir: Path) -> Dict[str, Dict[str, List[str]]]:
-    result = {
-        "cupti": {},
-        "tracepoint": {},
-    }
+    # split with _
+    filename_parts = filename.split('_')
 
-    for hostname in os.listdir(logdir):
-        if not os.path.isdir(os.path.join(logdir, hostname)):
+    if len(filename_parts) == 2 and filename_parts[0] == 'rank' and filename_parts[1].isdigit():
+        rank = int(filename_parts[1])
+        success = True
+        
+    return rank, success
+
+# -------------------------------------------------------------------------
+# Filter profile logging records by given timestamp range.
+# We use pandas chunking for better performance.
+# -------------------------------------------------------------------------
+import pandas as pd
+def filter_profile_records_by_timestamp_range(input_file, start_ts:int, end_ts:int, ts_unit : TsUnit, chunk_line_count: int):
+    
+    reached_end = False
+    col_names=["timestamp", "rank", "stream", "op_type", "op_name", "op_phase"]
+
+    chunk_list = []
+
+    for chunk in pd.read_csv(input_file, chunksize=chunk_line_count, header=None, names=col_names):
+
+        if reached_end:
+            break
+
+        # Scale timestamp by ts unit before we query
+        if ts_unit == TsUnit.NS:
+            chunk['timestamp'] /= 1000
+
+        min_ts = chunk['timestamp'].min()
+        max_ts = chunk['timestamp'].max()
+
+        if max_ts < start_ts:
+            continue
+        if min_ts > end_ts:
+            reached_end = True
+            break
+
+        # We filter what we want in current chunk
+        filtered_chunk = chunk[(chunk['timestamp'] >= start_ts) & (chunk['timestamp'] <= end_ts)]
+        
+        if not filtered_chunk.empty:
+            chunk_list.append(filtered_chunk)
+
+    if chunk_list:
+        result_df = pd.concat(chunk_list, ignore_index=True)
+        return result_df
+    else:
+        return pd.DataFrame()
+
+# -------------------------------------------------------------------------
+# Find specific profile logging files produced by CUPTI and tracepoint
+# from every worker.
+# 
+# Return a list of relative path to logging files.
+# Like 
+# [
+#     $(log)/sanity-check-32b-669f0566-worker-18/CUPTI/rank_152.log,
+#     ...
+# ]
+# 
+# -------------------------------------------------------------------------
+def get_profile_log_files_within_ranks(logdir: Path, ranks: List[int]):
+    filter_result = []
+
+    for host_name in os.listdir(logdir):
+        host_path = logdir / Path(host_name)
+        
+        # We only look for sub-folders under log folder.
+        b_folder = os.path.isdir(host_path)
+        if not b_folder:
             continue
 
-        if hostname not in result["cupti"]:
-            result["cupti"][hostname] = []
-            result["tracepoint"][hostname] = []
+        for profile_tool in os.listdir(host_path):
 
-        for rank_file in os.listdir(os.path.join(logdir, hostname, "CUPTI")):
-            cupti_rank_file = os.path.join(
-                logdir,
-                hostname,
-                "CUPTI",
-                rank_file,
-            )
-            result["cupti"][hostname].append(cupti_rank_file)
-        for rank_file in os.listdir(os.path.join(logdir, hostname, "TracePoint")):
-            tracepoint_rank_file = os.path.join(
-                logdir, hostname, "TracePoint", rank_file
-            )
-            result["tracepoint"][hostname].append(tracepoint_rank_file)
+            rank_logs_path = None
 
-    return result
+            if profile_tool == 'CUPTI' or profile_tool == 'tracepoint':
 
+                rank_logs_path = host_path / profile_tool
+                # Decide the profile category
+                profile_category = ProfileCategory.CUPTI if profile_tool == 'CUPTI' else ProfileCategory.TRACEPOINT
+                timestamp_unit   = TsUnit.NS if profile_tool == 'CUPTI' else TsUnit.MS 
+                
+                for rank_log_file in os.listdir(rank_logs_path):
+                    rank_log_path = rank_logs_path / rank_log_file
+                    
+                    rank, parse_success = _parse_rank_filename(rank_log_file)
+
+                    if parse_success and rank in ranks:
+                        # Parse timestamp in first line and last line.
+                        filter_result.append(ProfileLogFile(timestamp_unit, profile_category, str(rank_log_path)))
+
+    
+    return filter_result
 
 def generate_chrome_trace_json(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Generate Chrome Trace JSON structure."""
@@ -165,46 +262,56 @@ def generate_chrome_trace_json(events: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def generate_chrome_trace_from_logdir():
-    all_records = []
-    # TODO: get all records from logdir
+    # 1. Get rank logging files in the rank ranges.
+    filtered_logs = get_profile_log_files_within_ranks(args.logdir, args.rank)
+
+    # 2. Read each log file into a csv file. Parse first timestamp and last timestamp.
+    records = []
+    for filtered_log in filtered_logs:
+        chunk = filter_profile_records_by_timestamp_range(filtered_log.path, args.begin, args.end, filtered_log.ts_unit, chunk_line_count=100000)
+        records.append(chunk)
+
+    all_records = pd.concat(records, ignore_index=True)
 
     all_events = []
-    for record in all_records:
-        event_name = record[5]
-        if args.id_map and "vtimeline_marker" in record[5]:
-            if record[5].split("_")[-1] in args.id_map:
-                event_name = (
-                    "_".join(record[5].split("_")[:-1])
-                    + "_"
-                    + args.id_map[record[5].split("_")[-1]]
-                )
 
-        if "vtimeline_marker_begin" in event_name and record[6] == "E":
-            continue
-        if "vtimeline_marker_end" in event_name and record[6] == "B":
-            continue
-        # like vtimeline_marker_begin_eventname and vtimeline_marker_end_eventname
-        # remove the begin and end in the event name
-        if (
-            "vtimeline_marker_begin" in event_name
-            or "vtimeline_marker_end" in event_name
-        ):
-            event_name = event_name.split("_")
-            event_name = "_".join(event_name[0:2]) + "_" + "_".join(event_name[3:])
+    # all_records is expected to be a pandas DataFrame with columns:
+    # [timestamp, rank, stream, op_type, op_name, op_phase]
+    #  0,         1,    2,      3,       4,       5,
+    for row in all_records.itertuples(index=False):
+        # Use op_name as event name
+        event_name = row[4]
 
+        if args.id_map and "vtimeline_marker" in event_name:
+            parts = event_name.split("_")
+            if parts and parts[-1] in args.id_map:
+                parts[-1] = args.id_map[parts[-1]]
+                event_name = "_".join(parts)
+
+        if "vtimeline_marker_begin" in event_name and row[5] == "E":
+            continue
+        if "vtimeline_marker_end" in event_name and row[5] == "B":
+            continue
+
+        if ("vtimeline_marker_begin" in event_name) or ("vtimeline_marker_end" in event_name):
+            parts = event_name.split("_")
+            # expected shape: [vtimeline, marker, begin|end, rest...]
+            if len(parts) > 3:
+                event_name = "_".join(parts[0:2] + parts[3:])
+
+        # Construct a TraceEvent object.
         trace_event = TraceEvent(
-            timestamp=record[0],
-            process_id="rank_" + str(record[2]),
-            thread_id="cpu" if record[3] == 0 else "stream_" + str(record[3]),
-            category=record[4],
+            timestamp=int(row[0]),
+            process_id="rank_" + str(int(row[1])),
+            thread_id=("cpu" if int(row[2]) == 0 else "stream_" + str(int(row[2]))),
+            category=str(row[3]),
             name=event_name,
-            phase=record[6],
+            phase=str(row[5]),
         )
 
         all_events.append(trace_event.to_dict())
 
     return generate_chrome_trace_json(all_events)
-
 
 if __name__ == "__main__":
     if args.logdir:
@@ -218,6 +325,7 @@ if __name__ == "__main__":
             json.dump(trace_json, f, separators=(",", ":"))
 
         print(f"Open {output_file} in Chrome at https://ui.perfetto.dev/ to visualize.")
+
     else:
         parser.print_help()
         parser.print_usage()
